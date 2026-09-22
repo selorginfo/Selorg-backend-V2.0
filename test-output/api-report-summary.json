@@ -1,0 +1,1826 @@
+{
+  "generatedAt": "2026-09-19T11:26:08.330Z",
+  "backendTotal": 2020,
+  "perApp": {
+    "CUSTOMER_APP": {
+      "total": 123,
+      "PASS": 123,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "PICKER_APP": {
+      "total": 9,
+      "PASS": 9,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "RIDER_APP": {
+      "total": 19,
+      "PASS": 19,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "WORKFORCE_SHARED": {
+      "total": 116,
+      "PASS": 116,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "HHD_APP": {
+      "total": 47,
+      "PASS": 47,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "DASHBOARD": {
+      "total": 1696,
+      "PASS": 1696,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 0
+    },
+    "INFRA": {
+      "total": 10,
+      "PASS": 8,
+      "FAIL": 0,
+      "BLOCKED": 0,
+      "SKIPPED": 2
+    }
+  },
+  "dashboardFrontend": {
+    "total": 120,
+    "PASS": 120,
+    "FAIL": 0,
+    "BLOCKED": 0,
+    "SKIPPED": 0,
+    "missingInBackend": 4
+  },
+  "failCategories": {},
+  "dashboardFrontendCalls": [
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/analytics/realtime",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/dashboard/dashboardService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/analytics/realtime",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ANALYTICS_REPORTS_READ; zod",
+      "body": "{\"success\":true,\"data\":{\"totalRevenue\":321,\"totalOrders\":3,\"activeUsers\":1,\"conversionRate\":0,\"averageOrderValue\":107,\"revenueGrowth\":0,\"ordersGrowth\":0,\"usersGrowth\":0}}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/analytics/revenue",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/promotionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/analytics/revenue",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ANALYTICS_REPORTS_READ; zod",
+      "body": "{\"success\":true,\"data\":[{\"category\":\"Uncategorized\",\"value\":186,\"percentage\":100,\"color\":\"#3b82f6\"}]}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/app-settings",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/account/notificationPrefsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/app-settings",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_CONFIG_READ",
+      "body": "{\"success\":true,\"settings\":{\"refreshIntervals\":{\"dashboard\":30,\"alerts\":15,\"orders\":10,\"inventory\":20,\"analytics\":30},\"storeMode\":\"online\",\"notifications\":{\"enabled\":true,\"sound\":true,\"criticalOnly\":f"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/app-settings",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/account/notificationPrefsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/app-settings",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_CONFIG_WRITE",
+      "body": "{\"success\":false,\"message\":\"Settings object is required\",\"data\":null,\"error\":{\"code\":400,\"title\":\"Bad Request\",\"message\":\"Settings object is required\",\"detail\":\"Settings object is required\",\"details\":"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/audit/logs",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/monitoring/hooks/useAuditLog.ts"
+      ],
+      "testedPath": "/api/v1/admin/audit/logs",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.COMPLIANCE_AUDIT_READ",
+      "body": "{\"success\":true,\"data\":[{\"id\":\"6aae714e75c67166c3107ec5\",\"timestamp\":\"2026-09-19T11:26:06.501Z\",\"user\":\"System\",\"userEmail\":\"system@internal\",\"action\":\"login_success\",\"module\":\"auth\",\"resource\":\"N/A\","
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/auth/login",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/auth/authService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/auth/login",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "public; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"email\",\"mess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/customers",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/commerce/customerService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/customers",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[{\"id\":\"6aae62ee77b29aef1857831e\",\"phone\":\"9698790921\",\"email\":\"\",\"status\":{\"label\":\"Active\",\"tone\":\"green\"},\"orders\":0,\"totalSpend\":\"₹0\",\"walletBalance\":0,\"lastOrder\":\"—\",\"tick"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/customers",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/commerce/customerService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/customers",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"name is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"name is required\",\"detail\":\"name is required\",\"details\":{\"stack\":"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/customers/:param",
+      "files": [
+        "src/services/commerce/customerService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/customers/6aae62ee77b29aef1857831e",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":{\"id\":\"6aae62ee77b29aef1857831e\",\"email\":\"\",\"phone\":\"9698790921\",\"status\":\"active\"}}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/customers/:param",
+      "files": [
+        "src/services/commerce/customerService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/customers/6aae62ee77b29aef1857831e",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"No updatable fields provided\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"No updatable fields provided\",\"detail\":\"No updatable "
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/customers/:param/wallet/credit",
+      "files": [
+        "src/services/commerce/customerService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/customers/6aae62ee77b29aef1857831e/wallet/credit",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"amount must be a positive number\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"amount must be a positive number\",\"detail\":\"amoun"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/darkstores",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/hooks/useStores.ts"
+      ],
+      "testedPath": "/api/v1/admin/darkstores",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[{\"_id\":\"6aae70f777b29aef18578330\",\"code\":\"AUTO-CHN-CENTRAL-01\",\"address\":{\"line1\":\"Anna Salai\",\"line2\":\"\",\"city\":\"Chennai\",\"state\":\"TN\",\"pincode\":\"600002\"},\"avgPickPackTime\":5,"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/darkstores",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/hooks/useStores.ts"
+      ],
+      "testedPath": "/api/v1/admin/darkstores",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/admin/darkstores/:param",
+      "files": [
+        "src/modules/darkstore/hooks/useStores.ts"
+      ],
+      "testedPath": "/api/v1/admin/darkstores/6aae70f777b29aef18578330",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Store deleted\"}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/darkstores/:param",
+      "files": [
+        "src/modules/darkstore/hooks/useStores.ts"
+      ],
+      "testedPath": "/api/v1/admin/darkstores/6aae70f777b29aef18578330",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Store not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Store not found\",\"detail\":\"Store not found\",\"details\":null},\"pagination\":null,\"timestamp\":\"2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/finance/approvals/:param/decision",
+      "files": [
+        "src/services/earningRules/earningRuleService.real.ts",
+        "src/services/workforce/earningsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/finance/approvals/6aae0000cafad5450dae0000/decision",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":null,\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:06.729Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/finance/config/commission-slabs",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/earningRules/earningRuleService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/finance/config/commission-slabs",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"_id\":\"6aae62f163bab9c704c0a7f5\",\"active\":true,\"createdAt\":\"2026-09-19T10:24:49.954Z\",\"updatedAt\":\"2026-09-19T10:24:49.954Z\",\"__v\":0},{\"_id\":\"6aae635d63bab"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/finance/picker-withdrawals/:param",
+      "files": [
+        "src/services/workforce/earningsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/finance/picker-withdrawals/6aae0000cafad5450dae0000",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":null,\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:06.761Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/finance/vendor-payments/payments",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/workforce/payoutsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/finance/vendor-payments/payments",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"items\":[],\"total\":0,\"page\":1,\"limit\":50},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:06.776Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/finance/vendor-payments/payments/:param/advance",
+      "files": [
+        "src/services/workforce/payoutsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/finance/vendor-payments/payments/6aae0000cafad5450dae0000/advance",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":null,\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:06.792Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/fraud/alerts",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/monitoring/exceptionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/fraud/alerts",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; zod",
+      "body": "{\"success\":true,\"data\":[],\"meta\":{\"total\":0,\"page\":1,\"limit\":50,\"pages\":0}}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/fraud/alerts/:param",
+      "files": [
+        "src/services/monitoring/exceptionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/fraud/alerts/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Alert #6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Alert #6aae0000cafad5450dae0000 not found\",\""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/integrations/:param/test",
+      "files": [
+        "src/services/integrations/integrationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/integrations/6aae0000cafad5450dae0000/test",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Integration #6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Integration #6aae0000cafad5450dae0000 "
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/integrations/health",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/integrations/integrationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/integrations/health",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"id\":\"6aae62ef63bab9c704c0a3d4\",\"serviceKey\":\"razorpay\",\"displayName\":\"Razorpay\",\"provider\":\"Razorpay Payments\",\"status\":\"unknown\",\"message\":\"Never synced\""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/mastersheet/active",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/active",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":null}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/mastersheet/finalize",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/finalize",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Missing jobId\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"Missing jobId\",\"detail\":\"Missing jobId\",\"details\":{\"stack\":\"AppError"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/mastersheet/history",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/history",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/mastersheet/history",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/history",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"sheets (non-empty array) is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"sheets (non-empty array) is required\",\"detail"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/mastersheet/prepare",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/prepare",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"No file uploaded\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"No file uploaded\",\"detail\":\"No file uploaded\",\"details\":{\"stack\":"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/mastersheet/process/:param",
+      "files": [
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/process/6aae0000cafad5450dae0000",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Missing jobId query parameter\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"Missing jobId query parameter\",\"detail\":\"Missing job"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/mastersheet/template",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/mastersheetService.ts"
+      ],
+      "testedPath": "/api/v1/admin/mastersheet/template",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "PK\u0003\u0004\n\u0000\u0000\u0000\b\u0000C[3]l�J�m\u0001\u0000\u0000�\u0007\u0000\u0000\u0013\u0000\u0000\u0000[Content_Types].xml�U�n�0\u0010��+\"_Qb�-�*\u0002��\u001e[��\u000f0�X8��1��w\u0012(�*\u0016!��K�d��2�\u001f�K\u001d-���&e���\"0����R�5y��X�A\u0018)�5��\r \u001b\u000e����\u0003��l0eE\b�s�\n(\u0005&ց�Jn})\u0002��\u0019w\"��\u0019�n���5\u0001L�C��\u0006�\u0011�b�C����� \u001e4�"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/notifications/history",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/notifications/notificationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/notifications/history",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/notifications/history/:param/retry",
+      "files": [
+        "src/services/notifications/notificationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/notifications/history/6aae0000cafad5450dae0000/retry",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Notification history entry #6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Notification history en"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/notifications/templates",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/notifications/notificationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/notifications/templates",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/notifications/templates/:param",
+      "files": [
+        "src/services/notifications/notificationService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/notifications/templates/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; zod",
+      "body": "{\"success\":false,\"message\":\"Template not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Template not found\",\"detail\":\"Template not found\",\"details\":null},\"pagination\":null,\"time"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/orders",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/darkstore/pickingService.real.ts",
+        "src/services/orders/orderService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"id\":\"6aae710675c67166c3107559\",\"orderNumber\":\"ORD-20260919-00003\",\"items\":[{\"id\":\"6aae710675c67166c310755b\",\"productId\":\"6aae70f777b29aef18578332\""
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/orders",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/orders/orderService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"customerId is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"customerId is required\",\"detail\":\"customerId is required\",\""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/orders/:param",
+      "files": [
+        "src/services/darkstore/pickingService.real.ts",
+        "src/services/orders/orderService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders/6aae710675c67166c3107559",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"id\":\"6aae710675c67166c3107559\",\"orderNumber\":\"ORD-20260919-00003\",\"items\":[{\"id\":\"6aae710675c67166c310755b\",\"productId\":\"6aae70f777b29aef18578332\",\"product"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/orders/:param/logs",
+      "files": [
+        "src/services/orders/orderService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders/6aae710675c67166c3107559/logs",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[{\"status\":\"pending\",\"timestamp\":\"2026-09-19T11:24:54.495Z\",\"note\":\"Order placed\",\"actor\":\"customer\"},{\"status\":\"confirmed\",\"timestamp\":\"2026-09-19T1"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/orders/:param/reassign-picker",
+      "files": [
+        "src/services/darkstore/pickingService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders/6aae710675c67166c3107559/reassign-picker",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": false,
+      "backendAuth": null,
+      "body": "{\"success\":false,\"message\":\"picker is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"picker is required\",\"detail\":\"picker is required\",\"details\":{\"s"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/orders/:param/update-status",
+      "files": [
+        "src/services/orders/orderService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/orders/6aae710675c67166c3107559/update-status",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"status\",\"mes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/permissions/matrix",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/roles/permissionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/permissions/matrix",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_READ",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"modules\":[]},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.109Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/picker/approvals/:param/decision",
+      "files": [
+        "src/services/approvals/approvalService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/picker/approvals/6aae0000cafad5450dae0000/decision",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": false,
+      "backendAuth": null,
+      "body": "{\"success\":false,\"message\":\"decision must be approve or reject\",\"data\":null,\"error\":{\"code\":400,\"title\":\"Bad Request\",\"message\":\"decision must be approve or reject\",\"detail\":\"decision must be approve "
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/picker/pickers/:param/assignment",
+      "files": [
+        "src/services/workforce/rosterService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/picker/pickers/6aae0000cafad5450dae0000/assignment",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"pickerId\":\"6aae0000cafad5450dae0000\",\"assignment\":{}},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.139Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/picker/shift-change-requests",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/workforce/rosterService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/picker/shift-change-requests",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"requests\":[],\"total\":0},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.154Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/picker/shift-change-requests/:param/decision",
+      "files": [
+        "src/services/workforce/rosterService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/picker/shift-change-requests/6aae0000cafad5450dae0000/decision",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"requestId\":\"6aae0000cafad5450dae0000\",\"decidedBy\":\"6aae619977b29aef18578317\"},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.170Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/platform-config",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/system/settingsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/platform-config",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_CONFIG_READ",
+      "body": "{\"success\":true,\"message\":\"Platform configs loaded\",\"data\":[{\"_id\":\"6aae655b77b29aef1857832f\",\"key\":\"6aae0000cafad5450dae0000\",\"__v\":0,\"createdAt\":\"2026-09-19T10:35:07.632Z\",\"description\":\"\",\"updatedA"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/platform-config/:param",
+      "files": [
+        "src/services/system/settingsService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/platform-config/6aae0000cafad5450dae0000",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_CONFIG_WRITE",
+      "body": "{\"success\":true,\"message\":\"Config saved\",\"data\":{\"_id\":\"6aae655b77b29aef1857832f\",\"key\":\"6aae0000cafad5450dae0000\",\"__v\":0,\"createdAt\":\"2026-09-19T10:35:07.632Z\",\"description\":\"\",\"updatedAt\":\"2026-09-"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/platform-config/workspace.:param",
+      "files": [
+        "src/services/workspace/workspaceService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/platform-config/workspace.6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": false,
+      "backendAuth": null,
+      "body": "{\"success\":false,\"message\":\"PlatformConfig #workspace.6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"PlatformConfig #workspace.6aae0000cafad5450dae0"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/products",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/pages/DarkStoreProductsPage.tsx",
+        "src/modules/warehouse/pages/WarehouseInventoryProductsPage.tsx",
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":[],\"meta\":{\"total\":0,\"page\":1,\"limit\":50,\"totalPages\":0}}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/products",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"sku and name are required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"sku and name are required\",\"detail\":\"sku and name are re"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/admin/products/:param",
+      "files": [
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products/6aae70f777b29aef18578332",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Product not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Product not found not found\",\"detail\":\"Product not found n"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/products/:param",
+      "files": [
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products/6aae70f777b29aef18578332",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Product not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Product not found not found\",\"detail\":\"Product not found n"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/products/:param",
+      "files": [
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products/6aae70f777b29aef18578332",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Product not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Product not found not found\",\"detail\":\"Product not found n"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/products/bulk-upload",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/catalogService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/products/bulk-upload",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"No file uploaded\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"No file uploaded\",\"detail\":\"No file uploaded\",\"details\":{\"stack\":"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/riders",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/riders/ridersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/riders",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[{\"id\":\"6aae635a63bab9c704c0aa9a\",\"name\":\"\",\"status\":\"PENDING\",\"workforceRole\":\"rider\"},{\"id\":\"6aae635a63bab9c704c0aa92\",\"name\":\"\",\"status\":\"REJECTED\",\"workforceRole\":\"picker\"}]"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/riders/:param/status",
+      "files": [
+        "src/services/approvals/approvalService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/riders/6aae0000cafad5450dae0000/status",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Invalid status\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"Invalid status\",\"detail\":\"Invalid status\",\"details\":{\"stack\":\"AppEr"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/roles",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/roles/rolesService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/roles",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_READ",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[],\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.345Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/roles",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/roles/rolesService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/roles",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"name\",\"messa"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/admin/roles/:param",
+      "files": [
+        "src/services/roles/rolesService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/roles/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_WRITE",
+      "body": "{\"success\":false,\"message\":\"Role #6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Role #6aae0000cafad5450dae0000 not found\",\"de"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/roles/:param",
+      "files": [
+        "src/services/roles/rolesService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/roles/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Role #6aae0000cafad5450dae0000 not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Role #6aae0000cafad5450dae0000 not found\",\"de"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/roles/:param/matrix",
+      "files": [
+        "src/services/roles/rolesService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/roles/6aae0000cafad5450dae0000/matrix",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"permissions\""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/store-warehouse/warehouse-inventory",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/warehouse/hooks/useWarehouseInventory.ts"
+      ],
+      "testedPath": "/api/v1/admin/store-warehouse/warehouse-inventory",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"items\":[],\"total\":0,\"page\":1,\"limit\":50},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.425Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/support/tickets",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/commerce/cxTicketService.real.ts",
+        "src/services/support/supportTicketService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/support/tickets",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[],\"list\":[],\"meta\":{\"total\":0,\"page\":1,\"limit\":20,\"totalPages\":0}}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/support/tickets/:param",
+      "files": [
+        "src/services/commerce/cxTicketService.real.ts",
+        "src/services/support/supportTicketService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/support/tickets/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Ticket not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Ticket not found not found\",\"detail\":\"Ticket not found not "
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/support/tickets/:param/assign",
+      "files": [
+        "src/services/commerce/cxTicketService.real.ts",
+        "src/services/support/supportTicketService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/support/tickets/6aae0000cafad5450dae0000/assign",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"agent (userId) is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"agent (userId) is required\",\"detail\":\"agent (userId) is"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/support/tickets/:param/notes",
+      "files": [
+        "src/services/commerce/cxTicketService.real.ts",
+        "src/services/support/supportTicketService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/support/tickets/6aae0000cafad5450dae0000/notes",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Ticket not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Ticket not found not found\",\"detail\":\"Ticket not found not "
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/support/tickets/:param/refund",
+      "files": [
+        "src/services/commerce/cxTicketService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/support/tickets/6aae0000cafad5450dae0000/refund",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Ticket not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Ticket not found not found\",\"detail\":\"Ticket not found not "
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/users",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_READ",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"email\":\"hemanathc0112@gmail.com\",\"__v\":0,\"assignedStores\":[],\"createdAt\":\"2026-09-19T10:19:05.708Z\",\"department\":\"Technology\",\"emailVerified\":true,\"locati"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/users",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"email\",\"mess"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/users/:param",
+      "files": [
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users/6aae619977b29aef18578318",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_WRITE; zod",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"email\":\"hemanathc0112@gmail.com\",\"__v\":0,\"assignedStores\":[],\"createdAt\":\"2026-09-19T10:19:05.708Z\",\"department\":\"Technology\",\"emailVerified\":true,\"locatio"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/users/:param/reset-password",
+      "files": [
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users/6aae619977b29aef18578318/reset-password",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_WRITE; zod",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"newPassword\":\"mGutHRmJLB7wA1\",\"message\":\"Password has been reset\",\"emailSent\":true},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.605Z\"}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/admin/users/:param/role",
+      "files": [
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users/6aae619977b29aef18578318/role",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_ROLES_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"roleId\",\"mes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/users/verification/send-otp",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users/verification/send-otp",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"email\",\"mess"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/users/verification/verify-otp",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/system/usersService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/users/verification/verify-otp",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin; perm: PERMISSIONS.ADMIN_USERS_WRITE; zod",
+      "body": "{\"success\":false,\"message\":\"Required\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Required\",\"detail\":\"Required\",\"details\":[{\"field\":\"email\",\"mess"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/vendor/vendors",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"vendors\":[{\"_id\":\"6aae710875c67166c3107b80\",\"vendorCode\":\"VND-1789817096993-9XAI\",\"paymentTerms\":\"30 days\",\"currencyCode\":\"INR\",\"code\":\"VND-1789817096993-9"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/vendor/vendors",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors",
+      "status": 201,
+      "verdict": "PASS",
+      "reason": "201",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"vendorCode\":\"VND-1789817167662-V1WE\",\"paymentTerms\":\"30 days\",\"currencyCode\":\"INR\",\"code\":\"VND-1789817167662-V1WE\",\"status\":\"pending\",\"stage\":\"new_request\""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/vendor/vendors/:param/performance",
+      "files": [
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors/6aae0000cafad5450dae0000/performance",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"vendorId\":\"6aae0000cafad5450dae0000\",\"qc\":{\"total\":6,\"pass\":0,\"fail\":0,\"pending\":6,\"passRate\":0},\"openAlerts\":4,\"certificates\":{\"total\":0,\"valid\":0,\"expire"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/vendor/vendors/:param/qc-checks",
+      "files": [
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors/6aae0000cafad5450dae0000/qc-checks",
+      "status": 201,
+      "verdict": "PASS",
+      "reason": "201",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"checkId\":\"QC-1789817167677-LIA0\",\"vendorId\":\"6aae0000cafad5450dae0000\",\"status\":\"pending\",\"_id\":\"6aae714f75c67166c3107f14\",\"createdAt\":\"2026-09-19T11:26:07"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/admin/vendor/vendors/:param/stage",
+      "files": [
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors/6aae0000cafad5450dae0000/stage",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":null,\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.690Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/vendor/vendors/send-doc-request-email",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/vendors/vendorService.real.ts"
+      ],
+      "testedPath": "/api/v1/admin/vendor/vendors/send-doc-request-email",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"vendorId is required\",\"data\":null,\"error\":{\"code\":400,\"title\":\"Bad Request\",\"message\":\"vendorId is required\",\"detail\":\"vendorId is required\",\"details\":null},\"pagination\":nu"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/warehouses",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/pages/DarkStoreNetworkPage.tsx"
+      ],
+      "testedPath": "/api/v1/admin/warehouses",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"data\":[],\"pagination\":{\"page\":1,\"limit\":20,\"total\":0}},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.721Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/banners",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/promotionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/banners",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[{\"_id\":\"6aae710975c67166c3107bab\",\"siteId\":null,\"bannerId\":\"\",\"slot\":\"hero\",\"presentationMode\":\"single\",\"isNavigable\":true,\"imageUrl\":\"\",\"bannerType\":\"\",\"sectionCode\":\"\",\"banne"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customer/admin/categories",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/categories/categoryService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/categories",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customer/admin/categories/:param",
+      "files": [
+        "src/services/categories/categoryService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/categories/6aae70f777b29aef18578331",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Category deleted\"}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customer/admin/categories/:param",
+      "files": [
+        "src/services/categories/categoryService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/categories/6aae70f777b29aef18578331",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Category not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Category not found\",\"detail\":\"Category not found\",\"details\":null},\"pagination\":null,\"time"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/categories/all",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/categories/categoryService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/categories/all",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[{\"id\":\"6aae619a77b29aef1857831b\",\"name\":\"Fresh Dairy\",\"slug\":\"fresh-dairy\",\"parentId\":\"6aae70f777b29aef18578331\",\"isActive\":true,\"order\":1,\"imageUrl\":\"\",\"th"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/cms/media",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/cms/mediaService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/cms/media",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customer/admin/cms/media/:param",
+      "files": [
+        "src/services/cms/mediaService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/cms/media/6aae62ee77b29aef1857831e",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":{\"_id\":\"6aae714f77b29aef1857833a\",\"key\":\"6aae62ee77b29aef1857831e\",\"kind\":\"cms-media-delete\",\"__v\":0,\"actor\":\"6aae619977b29aef18578317\",\"createdAt\":\"2026-09-19T11:26:07.828Z\",\"s"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/cms/pages",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/cms/hooks/useContentCalendar.ts",
+        "src/services/cms/contentService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/cms/pages",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":true,\"data\":[],\"total\":0,\"page\":1,\"limit\":20}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customer/admin/cms/pages",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/cms/contentService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/cms/pages",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customer/admin/cms/pages/:param",
+      "files": [
+        "src/services/cms/contentService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/cms/pages/6aae62ee77b29aef1857831e",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token); roles: admin, super_admin",
+      "body": "{\"success\":false,\"message\":\"Page not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Page not found\",\"detail\":\"Page not found\",\"details\":{\"stack\":\"AppError:"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/coupons",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/catalog/promotionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/coupons",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "public",
+      "body": "{\"success\":true,\"message\":\"Items fetched successfully\",\"data\":[],\"error\":null,\"pagination\":{\"total\":0,\"page\":1,\"limit\":50,\"pages\":1,\"hasNextPage\":false,\"hasPrevPage\":false},\"timestamp\":\"2026-09-19T11:"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customer/admin/coupons/:param",
+      "files": [
+        "src/services/catalog/promotionsService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/coupons/6aae62ee77b29aef1857831e",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "public",
+      "body": "{\"success\":false,\"message\":\"Coupon not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Coupon not found\",\"detail\":\"Coupon not found\",\"details\":null},\"pagination\":null,\"timestamp\""
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customer/admin/home/sections",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/cms/homeSectionService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/home/sections",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customer/admin/home/sections",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/cms/homeSectionService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/home/sections",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customer/admin/home/sections/:param",
+      "files": [
+        "src/services/cms/homeSectionService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/home/sections/6aae62ee77b29aef1857831e",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Section not found not found\",\"data\":null,\"error\":{\"code\":404,\"appCode\":\"NOT_FOUND\",\"title\":\"Not Found\",\"message\":\"Section not found not found\",\"detail\":\"Section not found n"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customer/admin/home/sections/reorder",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/cms/homeSectionService.real.ts"
+      ],
+      "testedPath": "/api/v1/customer/admin/home/sections/reorder",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"ids array is required\",\"data\":null,\"error\":{\"code\":400,\"appCode\":\"BAD_REQUEST\",\"title\":\"Bad Request\",\"message\":\"ids array is required\",\"detail\":\"ids array is required\",\"det"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/hsd/fleet",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/monitoring/hooks/useScanner.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/hsd/fleet",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"total\":4,\"available\":4,\"assigned\":0,\"maintenance\":0},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:07.988Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/hsd/logs",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/monitoring/hooks/useScanner.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/hsd/logs",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"logs\":[],\"total\":0,\"page\":1,\"limit\":50},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.003Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/inventory/shelves",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/hooks/useRacks.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/inventory/shelves",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[],\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.017Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/darkstore/inventory/shelves",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/hooks/useRacks.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/inventory/shelves",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/inventory/stock-levels",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/darkstore/hooks/useStoreInventory.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/inventory/stock-levels",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"items\":[],\"total\":0,\"page\":1,\"limit\":50},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.049Z\"}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/darkstore/orders/:param/bag-rack",
+      "files": [
+        "src/services/darkstore/bagsService.real.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/orders/6aae710675c67166c3107559/bag-rack",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Order not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Order not found\",\"detail\":\"Order not found\",\"details\":null},\"pagination\":null,\"timestamp\":\"2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/packing/queue",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/darkstore/bagsService.real.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/packing/queue",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":[],\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.081Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/darkstore/reports/export",
+      "files": [
+        "src/modules/system/pages/ReportsCatalogPage.tsx"
+      ],
+      "testedPath": "/api/v1/darkstore/reports/export",
+      "status": 201,
+      "verdict": "PASS",
+      "reason": "201",
+      "existsInBackend": false,
+      "backendAuth": null,
+      "body": "{\"success\":true,\"data\":{\"kind\":\"darkstore-report-export\",\"key\":null,\"method\":\"POST\",\"path\":\"/api/v1/darkstore/reports/export\",\"actor\":\"6aae619977b29aef18578317\",\"status\":\"recorded\",\"_id\":\"6aae715075c6"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/darkstore/utilities/audit-logs",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/monitoring/hooks/useScanHistory.ts"
+      ],
+      "testedPath": "/api/v1/darkstore/utilities/audit-logs",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"logs\":[],\"total\":0,\"page\":1,\"limit\":50},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.111Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rider/dashboard/counts",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/riders/ridersService.real.ts"
+      ],
+      "testedPath": "/api/v1/rider/dashboard/counts",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"online\":0,\"busy\":0,\"offline\":0,\"idle\":0,\"total\":0},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.127Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/rider/dispatch/assign",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/riders/ridersService.real.ts"
+      ],
+      "testedPath": "/api/v1/rider/dispatch/assign",
+      "status": 400,
+      "verdict": "PASS",
+      "reason": "400",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"orderId and riderId are required\",\"data\":null,\"error\":{\"code\":400,\"title\":\"Bad Request\",\"message\":\"orderId and riderId are required\",\"detail\":\"orderId and riderId are requi"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rider/dispatch/map/riders",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/riders/ridersService.real.ts"
+      ],
+      "testedPath": "/api/v1/rider/dispatch/map/riders",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"riders\":[],\"statusCounts\":{\"online\":0,\"busy\":0,\"idle\":0,\"offline\":0}},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.159Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rider/dispatch/unassigned/count",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/riders/ridersService.real.ts"
+      ],
+      "testedPath": "/api/v1/rider/dispatch/unassigned/count",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"count\":0,\"priorityBreakdown\":{\"high\":0,\"medium\":0,\"low\":0}},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.175Z\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/rider/live-positions",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/modules/riders/hooks/useLiveRiderPositions.ts"
+      ],
+      "testedPath": "/api/v1/rider/live-positions",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"message\":\"Success\",\"data\":{\"riders\":[],\"count\":0},\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.189Z\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/warehouse/inbound/grns/:param/discrepancy",
+      "files": [
+        "src/services/warehouse/putawayService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/inbound/grns/6aae0000cafad5450dae0000/discrepancy",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"GRN not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"GRN not found\",\"detail\":\"GRN not found\",\"details\":null},\"pagination\":null,\"timestamp\":\"2026-09"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/warehouse/qc/inspections",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/warehouse/grnService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/qc/inspections",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/warehouse/staff/shifts",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/workforce/shiftsService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/staff/shifts",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/warehouse/staff/shifts",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/workforce/shiftsService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/staff/shifts",
+      "status": 422,
+      "verdict": "PASS",
+      "reason": "422",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Validation failed\",\"data\":null,\"error\":{\"code\":422,\"appCode\":\"VALIDATION_ERROR\",\"title\":\"Validation Error\",\"message\":\"Validation failed\",\"detail\":\"Validation failed\",\"detai"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/warehouse/staff/shifts/:param",
+      "files": [
+        "src/services/workforce/shiftsService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/staff/shifts/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Shift not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Shift not found\",\"detail\":\"Shift not found\",\"details\":null},\"pagination\":null,\"timestamp\":\"2"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/warehouse/staff/shifts/:param",
+      "files": [
+        "src/services/workforce/shiftsService.real.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/staff/shifts/6aae0000cafad5450dae0000",
+      "status": 404,
+      "verdict": "PASS",
+      "reason": "404",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":false,\"message\":\"Shift not found\",\"data\":null,\"error\":{\"code\":404,\"title\":\"Not Found\",\"message\":\"Shift not found\",\"detail\":\"Shift not found\",\"details\":null},\"pagination\":null,\"timestamp\":\"2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/warehouse/utilities/zones",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/services/warehouse/hierarchyService.ts"
+      ],
+      "testedPath": "/api/v1/warehouse/utilities/zones",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "admin JWT (Bearer or cookie selorg_admin_token)",
+      "body": "{\"success\":true,\"data\":[]}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/auth/logout",
+      "files": [
+        "src/data/dashboardApiCatalog.json",
+        "src/store/sessionStore.ts"
+      ],
+      "testedPath": "/api/v1/admin/auth/logout",
+      "status": 200,
+      "verdict": "PASS",
+      "reason": "200",
+      "existsInBackend": true,
+      "backendAuth": "public",
+      "body": "{\"success\":true,\"message\":\"Logged out successfully.\",\"data\":null,\"error\":null,\"pagination\":null,\"timestamp\":\"2026-09-19T11:26:08.315Z\"}"
+    }
+  ]
+}

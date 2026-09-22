@@ -1,0 +1,219 @@
+import { Product, IProduct } from './products.model';
+
+type LeanProduct = Partial<IProduct> & { _id: unknown };
+
+/**
+ * Normalizes a catalog title for "same product, different pack size" grouping — strips
+ * trailing weight/pack/container fragments so e.g. "Masala - 100g" and "Masala - 250g"
+ * collapse to the same line.
+ */
+export function productBaseName(name?: string | null): string {
+  if (name == null || typeof name !== 'string') return '';
+  let s = name.trim().replace(/\s+/g, ' ');
+  s = s.replace(/\s*[-–—]?\s*\d+(\.\d+)?\s*(g|kg|ml|mL|l|L|ltr|lt|pc|pcs)?\s*\*\s*\d+(\s*[-–—]\s*)?(multipack|bundle|pack)?\s*$/i, '').trim();
+  s = s.replace(/\s*[-–—]?\s*\d+(\.\d+)?\s*(g|kg|ml|mL|l|L|ltr|lt|pc|pcs|pack)\b(\s*(bottle|pouch|jar|tin|can|tub|pack|multipack|bundle))?\s*$/i, '').trim();
+  s = s.replace(/\s+(bottle|pouch|jar|tin|can|tub|multipack|bundle)\s*$/i, '').trim();
+  s = s.replace(/\s*[-–—]+\s*$/g, '').trim();
+  return s.toLowerCase();
+}
+
+/** Key for carousel/similar-products dedupe — same pack SKUs differing only by a leading brand word must show as one card. */
+export function productLineDedupeKey(name?: string | null): string {
+  const base = productBaseName(name);
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.length >= 3) return parts.slice(1).join(' ');
+  return base;
+}
+
+/** `hierarchyCode` is often shared too broadly; only treat docs as size-SKUs of the same product when base names match. */
+export function filterHierarchySiblingsForProductLine<T extends { name?: string }>(product: T, siblings: T[]): T[] {
+  if (!Array.isArray(siblings) || siblings.length === 0) return [];
+  const key = productBaseName(product.name);
+  if (!key) return siblings;
+  const filtered = siblings.filter((s) => productBaseName(s.name) === key);
+  if (filtered.length === 0) return [product];
+  return filtered;
+}
+
+/** One carousel/grid row per catalog product line (same base title, different pack SKUs), capped at maxCount after dedupe. */
+export function dedupeProductsByBaseName<T extends { name?: string; hierarchyCode?: string; _id: unknown }>(products: T[], maxCount?: number): T[] {
+  if (!Array.isArray(products) || products.length === 0) return products;
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const p of products) {
+    if (!p) continue;
+    const line = productLineDedupeKey(p.name);
+    const code = p.hierarchyCode && String(p.hierarchyCode).trim();
+    const k = code ? `h:${code}::${line || String(p._id)}` : line || `__id:${String(p._id)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+    if (typeof maxCount === 'number' && maxCount > 0 && out.length >= maxCount) break;
+  }
+  return out;
+}
+
+/** Stable image order: if `imageUrl` exists it must be index 0; remaining URLs preserve order, deduped. */
+export function normalizeImagesForClient(p?: { imageUrl?: string; images?: string[]; additionalImages?: string[] } | null): string[] {
+  const primary = typeof p?.imageUrl === 'string' ? p.imageUrl.trim() : '';
+  const urls: string[] = [];
+  if (primary) urls.push(primary);
+  if (Array.isArray(p?.images)) for (const u of p!.images!) if (typeof u === 'string' && u.trim()) urls.push(u.trim());
+  if (Array.isArray(p?.additionalImages)) for (const u of p!.additionalImages!) if (typeof u === 'string' && u.trim()) urls.push(u.trim());
+  return [...new Set(urls)];
+}
+
+/** Media fields so each variant row can show the correct SKU image (esp. hierarchy siblings). */
+export function pickImageFields(p?: { imageUrl?: string; thumbnailUrl?: string; cardImageUrl?: string; images?: string[]; additionalImages?: string[] } | null) {
+  if (!p) return {};
+  return { imageUrl: p.imageUrl || '', thumbnailUrl: p.thumbnailUrl || '', cardImageUrl: p.cardImageUrl || '', images: normalizeImagesForClient(p) };
+}
+
+export interface VariantRow {
+  id: string;
+  productId: string;
+  name?: string;
+  size: string;
+  price: number;
+  originalPrice: number;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  cardImageUrl?: string;
+  images?: string[];
+}
+
+/** Maps embedded subdocuments on a Style product to API variant rows. */
+export function mapEmbeddedVariants(product: LeanProduct): VariantRow[] {
+  const pid = String(product._id);
+  const out: VariantRow[] = [];
+  if (!Array.isArray(product.variants) || product.variants.length === 0) return out;
+  const media = pickImageFields(product);
+  for (let i = 0; i < product.variants.length; i += 1) {
+    const v = product.variants[i] as { _id?: unknown; price?: number; originalPrice?: number; mrp?: number; size?: string; sku?: string };
+    const id = v._id != null ? String(v._id) : `${pid}-v${i}`;
+    const price = typeof v.price === 'number' ? v.price : Number(product.price || 0);
+    const originalPrice = typeof v.originalPrice === 'number' ? v.originalPrice : Number(v.mrp ?? product.mrp ?? product.originalPrice ?? product.price ?? 0);
+    out.push({ id, productId: pid, name: product.name, size: String(v.size || v.sku || '').trim() || '1 unit', price, originalPrice, ...media });
+  }
+  return out;
+}
+
+export function singleVariantFallback(p: LeanProduct): VariantRow[] {
+  const pid = String(p._id);
+  return [{ id: pid, productId: pid, name: p.name, size: String(p.size || p.quantity || '').trim() || '1 unit', price: Number(p.price || 0), originalPrice: Number(p.mrp ?? p.originalPrice ?? p.price ?? 0), ...pickImageFields(p) }];
+}
+
+/**
+ * Attaches normalized `variants` to each product for list/carousel/search payloads:
+ * multiple embedded variant rows are used as-is; if embedded has 0/1 row but `hierarchyCode`
+ * exists, resolves sibling SKUs (same product line); otherwise falls back to a single
+ * synthetic variant using the product id (cart-compatible).
+ */
+export async function enrichProductsWithVariants<T extends LeanProduct>(products: T[], options: { dedupeProductLines?: boolean; maxProductLines?: number } = {}): Promise<Array<T & { variants: VariantRow[] }>> {
+  const dedupeLines = options.dedupeProductLines !== false;
+  let list: T[] = Array.isArray(products) ? products : [];
+  if (dedupeLines && list.length > 0) {
+    list = dedupeProductsByBaseName(list as never, options.maxProductLines) as T[];
+  }
+  if (!Array.isArray(list) || list.length === 0) return list as never;
+
+  const enriched = list.map((p) => ({ ...p })) as Array<T & { variants: VariantRow[] }>;
+  const needHierarchy: Array<{ index: number; code: string }> = [];
+
+  for (let i = 0; i < enriched.length; i += 1) {
+    const p = enriched[i];
+    const emb = mapEmbeddedVariants(p);
+    if (emb.length > 1) {
+      p.variants = emb;
+    } else if (p.hierarchyCode && String(p.hierarchyCode).trim()) {
+      needHierarchy.push({ index: i, code: String(p.hierarchyCode).trim() });
+    } else if (emb.length === 1) {
+      p.variants = emb;
+    } else {
+      p.variants = singleVariantFallback(p);
+    }
+  }
+
+  if (needHierarchy.length === 0) return enriched;
+
+  const uniqueCodes = [...new Set(needHierarchy.map((x) => x.code))];
+  const siblings = await Product.find({ hierarchyCode: { $in: uniqueCodes }, isActive: true, isSaleable: true })
+    .select({ _id: 1, name: 1, hierarchyCode: 1, size: 1, quantity: 1, price: 1, mrp: 1, originalPrice: 1, imageUrl: 1, thumbnailUrl: 1, cardImageUrl: 1, images: 1 })
+    .lean();
+
+  const byCode = new Map<string, typeof siblings>();
+  for (const s of siblings) {
+    const code = String(s.hierarchyCode || '');
+    if (!byCode.has(code)) byCode.set(code, []);
+    byCode.get(code)!.push(s);
+  }
+
+  for (const { index, code } of needHierarchy) {
+    const rawGroup = byCode.get(code) || [];
+    const p = enriched[index];
+    const group = filterHierarchySiblingsForProductLine(p as never, rawGroup as never) as typeof rawGroup;
+    if (group.length === 0) {
+      p.variants = singleVariantFallback(p);
+      continue;
+    }
+    if (group.length === 1) {
+      const s = group[0];
+      const sid = String(s._id);
+      p.variants = [{ id: sid, productId: sid, name: s.name, size: String(s.size || s.quantity || p.size || p.quantity || '').trim() || '1 unit', price: Number(s.price ?? p.price ?? 0), originalPrice: Number(s.mrp ?? s.originalPrice ?? p.mrp ?? p.originalPrice ?? p.price ?? 0), ...pickImageFields(s) }];
+      continue;
+    }
+    p.variants = group.map((s) => {
+      const sid = String(s._id);
+      return { id: sid, productId: sid, name: s.name, size: String(s.size || s.quantity || '').trim() || '1 unit', price: Number(s.price ?? 0), originalPrice: Number(s.mrp ?? s.originalPrice ?? s.price ?? 0), ...pickImageFields(s) };
+    });
+  }
+
+  return enriched;
+}
+
+/**
+ * Customer list/home APIs only render `classification: 'Style'` cards. Maps each Variant id
+ * to its Style sibling for the same hierarchy + product line (deduped, order preserved).
+ */
+export async function mapProductIdsToStyleIds(productIds: unknown[] = []): Promise<string[]> {
+  if (!Array.isArray(productIds) || productIds.length === 0) return [];
+  const uniqueIds = [...new Set(productIds.map((id) => String(id)).filter(Boolean))];
+  const docs = await Product.find({ _id: { $in: uniqueIds } }).select('_id classification hierarchyCode name').lean();
+  const byId = new Map(docs.map((d) => [String(d._id), d]));
+
+  const variantsNeedingStyle = [];
+  for (const id of uniqueIds) {
+    const d = byId.get(id);
+    if (!d) continue;
+    if (d.classification === 'Style') continue;
+    if (d.hierarchyCode && String(d.hierarchyCode).trim()) variantsNeedingStyle.push(d);
+  }
+
+  const styleByLine = new Map<string, string>();
+  const codes = [...new Set(variantsNeedingStyle.map((d) => String(d.hierarchyCode).trim()).filter(Boolean))];
+  if (codes.length > 0) {
+    const styles = await Product.find({ hierarchyCode: { $in: codes }, classification: 'Style', isActive: true, isSaleable: true }).select('_id hierarchyCode name').lean();
+    for (const s of styles) {
+      const key = `${String(s.hierarchyCode).trim()}::${productBaseName(s.name)}`;
+      if (!styleByLine.has(key)) styleByLine.set(key, String(s._id));
+    }
+  }
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of productIds.map((x) => String(x))) {
+    const d = byId.get(id);
+    if (!d) continue;
+    let styleId = String(d._id);
+    if (d.classification !== 'Style') {
+      const key = `${String(d.hierarchyCode || '').trim()}::${productBaseName(d.name)}`;
+      const mapped = styleByLine.get(key);
+      if (!mapped) continue;
+      styleId = mapped;
+    }
+    if (seen.has(styleId)) continue;
+    seen.add(styleId);
+    out.push(styleId);
+  }
+  return out;
+}

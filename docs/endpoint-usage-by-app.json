@@ -1,0 +1,1858 @@
+{
+  "scannedAt": "2026-09-11T08:53:12.614Z",
+  "apps": {
+    "customer-app": {
+      "paths": [
+        "/api/v1/customer/addresses",
+        "/api/v1/customer/addresses/:id",
+        "/api/v1/customer/addresses/:id/default",
+        "/api/v1/customer/addresses/default",
+        "/api/v1/customer/app-config",
+        "/api/v1/customer/auth",
+        "/api/v1/customer/auth/logout",
+        "/api/v1/customer/auth/resend-otp",
+        "/api/v1/customer/auth/send-otp",
+        "/api/v1/customer/auth/verify-otp",
+        "/api/v1/customer/bootstrap",
+        "/api/v1/customer/cart",
+        "/api/v1/customer/cart/clear",
+        "/api/v1/customer/cart/items",
+        "/api/v1/customer/cart/items/:id",
+        "/api/v1/customer/cart/merge",
+        "/api/v1/customer/categories",
+        "/api/v1/customer/categories/:id",
+        "/api/v1/customer/categories/:id/products",
+        "/api/v1/customer/categories/:id/subcategories",
+        "/api/v1/customer/collections/:id",
+        "/api/v1/customer/coupons",
+        "/api/v1/customer/coupons/redeem",
+        "/api/v1/customer/coupons/validate",
+        "/api/v1/customer/delivery/estimate",
+        "/api/v1/customer/delivery/fee",
+        "/api/v1/customer/home",
+        "/api/v1/customer/legal/accept",
+        "/api/v1/customer/legal/config",
+        "/api/v1/customer/legal/license",
+        "/api/v1/customer/legal/privacy",
+        "/api/v1/customer/legal/terms",
+        "/api/v1/customer/locations/approximate",
+        "/api/v1/customer/locations/suggestions",
+        "/api/v1/customer/notifications",
+        "/api/v1/customer/notifications/:id",
+        "/api/v1/customer/notifications/:id/read",
+        "/api/v1/customer/notifications/preferences",
+        "/api/v1/customer/notifications/read-all",
+        "/api/v1/customer/notifications/register-token",
+        "/api/v1/customer/notifications/remove-token",
+        "/api/v1/customer/notifications/unread-count",
+        "/api/v1/customer/orders",
+        "/api/v1/customer/orders/:id",
+        "/api/v1/customer/orders/:id/can-cancel",
+        "/api/v1/customer/orders/:id/cancel",
+        "/api/v1/customer/orders/:id/invoice",
+        "/api/v1/customer/orders/:id/rate",
+        "/api/v1/customer/orders/:id/reorder",
+        "/api/v1/customer/orders/:id/status",
+        "/api/v1/customer/orders/:id/tracking",
+        "/api/v1/customer/orders/:id/verify-otp",
+        "/api/v1/customer/orders/active",
+        "/api/v1/customer/payments/methods",
+        "/api/v1/customer/payments/methods/:id",
+        "/api/v1/customer/payments/methods/:id/default",
+        "/api/v1/customer/payments/worldline/abort",
+        "/api/v1/customer/payments/worldline/complete",
+        "/api/v1/customer/payments/worldline/session",
+        "/api/v1/customer/payments/worldline/status",
+        "/api/v1/customer/products/:id",
+        "/api/v1/customer/products/search",
+        "/api/v1/customer/products/search/suggestions",
+        "/api/v1/customer/products/search/trending",
+        "/api/v1/customer/refunds",
+        "/api/v1/customer/refunds/:id",
+        "/api/v1/customer/refunds/:id/details",
+        "/api/v1/customer/refunds/request",
+        "/api/v1/customer/sections/:id/products",
+        "/api/v1/customer/store/:id/inventory",
+        "/api/v1/customer/store/assign",
+        "/api/v1/customer/support/tickets",
+        "/api/v1/customer/support/tickets/:id/messages",
+        "/api/v1/customer/support/tickets/:id/reopen",
+        "/api/v1/customer/support/tickets/active",
+        "/api/v1/customer/user/profile",
+        "/api/v1/customer/wallet/balance",
+        "/api/v1/customer/wallet/debit",
+        "/api/v1/customer/wallet/top-up/session",
+        "/api/v1/customer/wallet/transactions"
+      ],
+      "count": 80
+    },
+    "customer-web": {
+      "paths": [
+        "/api/v1/customer/addresses",
+        "/api/v1/customer/addresses/:id",
+        "/api/v1/customer/addresses/:id/default",
+        "/api/v1/customer/app-config",
+        "/api/v1/customer/auth/link-phone/send-otp",
+        "/api/v1/customer/auth/link-phone/verify-otp",
+        "/api/v1/customer/auth/logout",
+        "/api/v1/customer/auth/resend-otp",
+        "/api/v1/customer/auth/send-otp",
+        "/api/v1/customer/auth/verify-otp",
+        "/api/v1/customer/bootstrap",
+        "/api/v1/customer/cart",
+        "/api/v1/customer/cart/clear",
+        "/api/v1/customer/cart/items",
+        "/api/v1/customer/cart/items/:id",
+        "/api/v1/customer/cart/merge",
+        "/api/v1/customer/categories",
+        "/api/v1/customer/categories/:id",
+        "/api/v1/customer/categories/:id/products",
+        "/api/v1/customer/collections/:id",
+        "/api/v1/customer/coupons",
+        "/api/v1/customer/coupons/validate",
+        "/api/v1/customer/delivery/estimate",
+        "/api/v1/customer/delivery/fee",
+        "/api/v1/customer/faq",
+        "/api/v1/customer/faq/:id/feedback",
+        "/api/v1/customer/home",
+        "/api/v1/customer/legal/accept",
+        "/api/v1/customer/legal/license",
+        "/api/v1/customer/legal/privacy",
+        "/api/v1/customer/legal/terms",
+        "/api/v1/customer/locations/approximate",
+        "/api/v1/customer/locations/suggestions",
+        "/api/v1/customer/notifications",
+        "/api/v1/customer/notifications/:id",
+        "/api/v1/customer/notifications/:id/read",
+        "/api/v1/customer/notifications/:id/unread",
+        "/api/v1/customer/notifications/preferences",
+        "/api/v1/customer/notifications/read-all",
+        "/api/v1/customer/notifications/unread-count",
+        "/api/v1/customer/onboarding/complete",
+        "/api/v1/customer/onboarding/status",
+        "/api/v1/customer/orders",
+        "/api/v1/customer/orders/:id",
+        "/api/v1/customer/orders/:id/cancel",
+        "/api/v1/customer/orders/:id/invoice",
+        "/api/v1/customer/orders/:id/rate",
+        "/api/v1/customer/orders/:id/reorder",
+        "/api/v1/customer/orders/:id/tracking",
+        "/api/v1/customer/orders/active",
+        "/api/v1/customer/pages/:id",
+        "/api/v1/customer/payments/methods",
+        "/api/v1/customer/payments/methods/:id",
+        "/api/v1/customer/payments/methods/:id/default",
+        "/api/v1/customer/payments/worldline/abort",
+        "/api/v1/customer/payments/worldline/complete",
+        "/api/v1/customer/payments/worldline/session",
+        "/api/v1/customer/payments/worldline/status",
+        "/api/v1/customer/products/:id",
+        "/api/v1/customer/products/search",
+        "/api/v1/customer/products/search/suggestions",
+        "/api/v1/customer/products/search/trending",
+        "/api/v1/customer/refunds",
+        "/api/v1/customer/refunds/:id",
+        "/api/v1/customer/refunds/:id/details",
+        "/api/v1/customer/refunds/request",
+        "/api/v1/customer/sections/:id/products",
+        "/api/v1/customer/store/:id/inventory",
+        "/api/v1/customer/store/assign",
+        "/api/v1/customer/support/tickets",
+        "/api/v1/customer/support/tickets/:id/messages",
+        "/api/v1/customer/support/tickets/:id/reopen",
+        "/api/v1/customer/support/tickets/active",
+        "/api/v1/customer/user/profile",
+        "/api/v1/customer/wallet/balance",
+        "/api/v1/customer/wallet/top-up/session",
+        "/api/v1/customer/wallet/transactions"
+      ],
+      "count": 77
+    },
+    "picker-app": {
+      "paths": [
+        "/api/v1/picker/attendance",
+        "/api/v1/picker/attendance/punch-in",
+        "/api/v1/picker/attendance/punch-out",
+        "/api/v1/picker/attendance/stats",
+        "/api/v1/picker/attendance/summary",
+        "/api/v1/picker/auth/logout",
+        "/api/v1/picker/auth/refresh",
+        "/api/v1/picker/auth/resend-otp",
+        "/api/v1/picker/auth/resend-otp-email",
+        "/api/v1/picker/auth/send-otp",
+        "/api/v1/picker/auth/send-otp-email",
+        "/api/v1/picker/auth/verify-otp",
+        "/api/v1/picker/auth/verify-otp-email",
+        "/api/v1/picker/bank/accounts",
+        "/api/v1/picker/bank/accounts/:id",
+        "/api/v1/picker/bank/accounts/:id/delete",
+        "/api/v1/picker/bank/accounts/:id/set-default",
+        "/api/v1/picker/bank/verify",
+        "/api/v1/picker/dark-store-login",
+        "/api/v1/picker/devices/assigned",
+        "/api/v1/picker/devices/collection-complete",
+        "/api/v1/picker/devices/return",
+        "/api/v1/picker/documents",
+        "/api/v1/picker/documents/upload",
+        "/api/v1/picker/faq",
+        "/api/v1/picker/heartbeat",
+        "/api/v1/picker/home/summary",
+        "/api/v1/picker/issues",
+        "/api/v1/picker/locations/set",
+        "/api/v1/picker/locations/set-darkstore-from-current",
+        "/api/v1/picker/manager/request-otp",
+        "/api/v1/picker/manager/verify-otp",
+        "/api/v1/picker/notifications",
+        "/api/v1/picker/notifications/:id/read",
+        "/api/v1/picker/notifications/read-all",
+        "/api/v1/picker/onboarding/state",
+        "/api/v1/picker/performance/history",
+        "/api/v1/picker/performance/summary",
+        "/api/v1/picker/presence/ping",
+        "/api/v1/picker/push-token",
+        "/api/v1/picker/settings/preferences",
+        "/api/v1/picker/shifts/available",
+        "/api/v1/picker/shifts/break/end",
+        "/api/v1/picker/shifts/break/start",
+        "/api/v1/picker/shifts/my",
+        "/api/v1/picker/shifts/readiness",
+        "/api/v1/picker/shifts/select",
+        "/api/v1/picker/support/chat/messages",
+        "/api/v1/picker/support/tickets",
+        "/api/v1/picker/training/assessment",
+        "/api/v1/picker/training/complete/:id",
+        "/api/v1/picker/training/modules/:id/complete",
+        "/api/v1/picker/training/user-progress",
+        "/api/v1/picker/training/videos",
+        "/api/v1/picker/training/videos/:id",
+        "/api/v1/picker/training/watch-progress",
+        "/api/v1/picker/user/location-type",
+        "/api/v1/picker/user/profile",
+        "/api/v1/picker/user/profile/overview",
+        "/api/v1/picker/user/upi",
+        "/api/v1/picker/verify/face",
+        "/api/v1/picker/wallet/balance",
+        "/api/v1/picker/wallet/deposit",
+        "/api/v1/picker/wallet/earnings-breakdown",
+        "/api/v1/picker/wallet/history",
+        "/api/v1/picker/wallet/transactions",
+        "/api/v1/picker/wallet/transactions/:id",
+        "/api/v1/picker/wallet/withdraw",
+        "/api/v1/picker/wallet/withdrawal-requests/:id",
+        "/api/v1/picker/work-locations"
+      ],
+      "count": 70
+    },
+    "rider-app": {
+      "paths": [
+        "/api/v1",
+        "/api/v1/picker/auth/logout",
+        "/api/v1/picker/auth/refresh",
+        "/api/v1/picker/auth/resend-otp",
+        "/api/v1/picker/auth/resend-otp-email",
+        "/api/v1/picker/auth/send-otp",
+        "/api/v1/picker/auth/send-otp-email",
+        "/api/v1/picker/bulk/bag/load",
+        "/api/v1/picker/bulk/batch",
+        "/api/v1/picker/bulk/batches",
+        "/api/v1/picker/bulk/batches/:id",
+        "/api/v1/picker/bulk/start",
+        "/api/v1/picker/bulk/stops/:id/arrive",
+        "/api/v1/picker/bulk/stops/:id/deliver",
+        "/api/v1/picker/bulk/stops/:id/fail",
+        "/api/v1/picker/bulk/stops/:id/proof-photo",
+        "/api/v1/picker/cash/deposits",
+        "/api/v1/picker/cash/summary",
+        "/api/v1/picker/cash/transactions",
+        "/api/v1/picker/config",
+        "/api/v1/picker/config/cancel-reasons",
+        "/api/v1/picker/dashboard/today",
+        "/api/v1/picker/documents",
+        "/api/v1/picker/faq",
+        "/api/v1/picker/incentives/today",
+        "/api/v1/picker/legal/privacy",
+        "/api/v1/picker/legal/terms",
+        "/api/v1/picker/locations/track",
+        "/api/v1/picker/notifications",
+        "/api/v1/picker/notifications/:id/read",
+        "/api/v1/picker/notifications/read-all",
+        "/api/v1/picker/onboarding/kit-ack",
+        "/api/v1/picker/onboarding/state",
+        "/api/v1/picker/onboarding/submit",
+        "/api/v1/picker/profile",
+        "/api/v1/picker/push-token",
+        "/api/v1/picker/settings/preferences",
+        "/api/v1/picker/shared-orders/:id",
+        "/api/v1/picker/shared-orders/:id/complete",
+        "/api/v1/picker/shared-orders/:id/proof-photo",
+        "/api/v1/picker/shared-orders/:id/status",
+        "/api/v1/picker/shared-orders/assignorders",
+        "/api/v1/picker/shared-orders/completed",
+        "/api/v1/picker/shifts/available",
+        "/api/v1/picker/shifts/deselect",
+        "/api/v1/picker/shifts/end",
+        "/api/v1/picker/shifts/my",
+        "/api/v1/picker/shifts/select",
+        "/api/v1/picker/shifts/start",
+        "/api/v1/picker/support/chat/messages",
+        "/api/v1/picker/support/tickets",
+        "/api/v1/picker/training/videos",
+        "/api/v1/picker/training/watch-progress",
+        "/api/v1/picker/uploads",
+        "/api/v1/picker/wallet",
+        "/api/v1/picker/wallet/earnings-breakdown",
+        "/api/v1/picker/wallet/history",
+        "/api/v1/picker/wallet/transactions",
+        "/api/v1/picker/work-locations"
+      ],
+      "count": 59
+    },
+    "hhd-app": {
+      "paths": [
+        "/api/v1/hhd/auth/logout",
+        "/api/v1/hhd/auth/me",
+        "/api/v1/hhd/auth/resend-otp",
+        "/api/v1/hhd/auth/send-otp",
+        "/api/v1/hhd/auth/verify-otp",
+        "/api/v1/hhd/bags/:id",
+        "/api/v1/hhd/bags/scan",
+        "/api/v1/hhd/dashboard",
+        "/api/v1/hhd/devices/current",
+        "/api/v1/hhd/items/:id/not-found",
+        "/api/v1/hhd/items/substitutes",
+        "/api/v1/hhd/orders/:id/status",
+        "/api/v1/hhd/orders/assignorders/:id/status",
+        "/api/v1/hhd/orders/status/pending",
+        "/api/v1/hhd/photos",
+        "/api/v1/hhd/photos/:id/verify",
+        "/api/v1/hhd/pick/report-issue",
+        "/api/v1/hhd/racks/scan",
+        "/api/v1/hhd/scanned-items",
+        "/api/v1/hhd/tasks",
+        "/api/v1/hhd/tasks/:id",
+        "/api/v1/hhd/users/contract",
+        "/api/v1/hhd/users/employment",
+        "/api/v1/hhd/users/heartbeat",
+        "/api/v1/hhd/users/linked-picker-profile",
+        "/api/v1/hhd/users/profile"
+      ],
+      "count": 26
+    },
+    "admin-dashboard": {
+      "paths": [
+        "/api/v1/admin/analytics/realtime",
+        "/api/v1/admin/analytics/revenue",
+        "/api/v1/admin/app-settings",
+        "/api/v1/admin/audit/logs",
+        "/api/v1/admin/auth/login",
+        "/api/v1/admin/customers",
+        "/api/v1/admin/customers/:id",
+        "/api/v1/admin/customers/:id/wallet/credit",
+        "/api/v1/admin/finance/approvals/:id/decision",
+        "/api/v1/admin/finance/config/commission-slabs",
+        "/api/v1/admin/finance/picker-withdrawals",
+        "/api/v1/admin/finance/picker-withdrawals/:id",
+        "/api/v1/admin/finance/rider-cash/payouts",
+        "/api/v1/admin/finance/vendor-payments/payments",
+        "/api/v1/admin/finance/vendor-payments/payments/:id/advance",
+        "/api/v1/admin/fraud/alerts",
+        "/api/v1/admin/fraud/alerts/:id",
+        "/api/v1/admin/integrations/:id/test",
+        "/api/v1/admin/integrations/health",
+        "/api/v1/admin/notifications/history",
+        "/api/v1/admin/notifications/history/:id/retry",
+        "/api/v1/admin/notifications/templates",
+        "/api/v1/admin/notifications/templates/:id",
+        "/api/v1/admin/orders",
+        "/api/v1/admin/orders/:id",
+        "/api/v1/admin/orders/:id/logs",
+        "/api/v1/admin/orders/:id/reassign-picker",
+        "/api/v1/admin/picker/approvals",
+        "/api/v1/admin/picker/approvals/:id/decision",
+        "/api/v1/admin/picker/pickers",
+        "/api/v1/admin/picker/pickers/:id/assignment",
+        "/api/v1/admin/picker/shift-change-requests",
+        "/api/v1/admin/picker/shift-change-requests/:id/decision",
+        "/api/v1/admin/platform-config",
+        "/api/v1/admin/platform-config/:id",
+        "/api/v1/admin/platform-config/workspace/:id",
+        "/api/v1/admin/products",
+        "/api/v1/admin/products/:id",
+        "/api/v1/admin/products/bulk-upload",
+        "/api/v1/admin/products/bulk-upload/template",
+        "/api/v1/admin/riders",
+        "/api/v1/admin/riders/:id/status",
+        "/api/v1/admin/roles",
+        "/api/v1/admin/support/tickets",
+        "/api/v1/admin/support/tickets/:id",
+        "/api/v1/admin/support/tickets/:id/assign",
+        "/api/v1/admin/support/tickets/:id/notes",
+        "/api/v1/admin/users",
+        "/api/v1/admin/users/:id",
+        "/api/v1/admin/users/verification/send-otp",
+        "/api/v1/admin/users/verification/verify-otp",
+        "/api/v1/admin/vendor/vendors",
+        "/api/v1/admin/vendor/vendors/:id/stage",
+        "/api/v1/customer/admin/categories",
+        "/api/v1/customer/admin/categories/:id",
+        "/api/v1/customer/admin/categories/all",
+        "/api/v1/customer/admin/cms/media",
+        "/api/v1/customer/admin/cms/media/:id",
+        "/api/v1/customer/admin/cms/pages",
+        "/api/v1/customer/admin/cms/pages/:id",
+        "/api/v1/customer/admin/coupons",
+        "/api/v1/customer/admin/coupons/:id",
+        "/api/v1/customer/admin/home/sections",
+        "/api/v1/customer/admin/home/sections/:id",
+        "/api/v1/customer/admin/home/sections/reorder",
+        "/api/v1/customer/admin/merch/stores",
+        "/api/v1/customer/banners",
+        "/api/v1/customer/orders/:id/update-status",
+        "/api/v1/darkstore/hsd/fleet",
+        "/api/v1/darkstore/hsd/logs",
+        "/api/v1/darkstore/inbound/putaway",
+        "/api/v1/darkstore/inventory/shelves",
+        "/api/v1/darkstore/inventory/stock-levels",
+        "/api/v1/darkstore/orders/:id/bag-rack",
+        "/api/v1/darkstore/packing/queue",
+        "/api/v1/darkstore/reports/compliance",
+        "/api/v1/darkstore/reports/export",
+        "/api/v1/darkstore/reports/inventory",
+        "/api/v1/darkstore/reports/staff",
+        "/api/v1/darkstore/utilities/audit-logs",
+        "/api/v1/rider/dispatch/map/riders",
+        "/api/v1/rider/fleet/summary",
+        "/api/v1/warehouse/inbound/grns",
+        "/api/v1/warehouse/inbound/grns/:id/discrepancy",
+        "/api/v1/warehouse/inventory/items",
+        "/api/v1/warehouse/qc/inspections",
+        "/api/v1/warehouse/staff/shifts",
+        "/api/v1/warehouse/staff/shifts/:id",
+        "/api/v1/warehouse/transfers",
+        "/api/v1/warehouse/utilities/zones"
+      ],
+      "count": 90
+    }
+  },
+  "allUniquePaths": [
+    "/api/v1",
+    "/api/v1/admin/analytics/realtime",
+    "/api/v1/admin/analytics/revenue",
+    "/api/v1/admin/app-settings",
+    "/api/v1/admin/audit/logs",
+    "/api/v1/admin/auth/login",
+    "/api/v1/admin/customers",
+    "/api/v1/admin/customers/:id",
+    "/api/v1/admin/customers/:id/wallet/credit",
+    "/api/v1/admin/finance/approvals/:id/decision",
+    "/api/v1/admin/finance/config/commission-slabs",
+    "/api/v1/admin/finance/picker-withdrawals",
+    "/api/v1/admin/finance/picker-withdrawals/:id",
+    "/api/v1/admin/finance/rider-cash/payouts",
+    "/api/v1/admin/finance/vendor-payments/payments",
+    "/api/v1/admin/finance/vendor-payments/payments/:id/advance",
+    "/api/v1/admin/fraud/alerts",
+    "/api/v1/admin/fraud/alerts/:id",
+    "/api/v1/admin/integrations/:id/test",
+    "/api/v1/admin/integrations/health",
+    "/api/v1/admin/notifications/history",
+    "/api/v1/admin/notifications/history/:id/retry",
+    "/api/v1/admin/notifications/templates",
+    "/api/v1/admin/notifications/templates/:id",
+    "/api/v1/admin/orders",
+    "/api/v1/admin/orders/:id",
+    "/api/v1/admin/orders/:id/logs",
+    "/api/v1/admin/orders/:id/reassign-picker",
+    "/api/v1/admin/picker/approvals",
+    "/api/v1/admin/picker/approvals/:id/decision",
+    "/api/v1/admin/picker/pickers",
+    "/api/v1/admin/picker/pickers/:id/assignment",
+    "/api/v1/admin/picker/shift-change-requests",
+    "/api/v1/admin/picker/shift-change-requests/:id/decision",
+    "/api/v1/admin/platform-config",
+    "/api/v1/admin/platform-config/:id",
+    "/api/v1/admin/platform-config/workspace/:id",
+    "/api/v1/admin/products",
+    "/api/v1/admin/products/:id",
+    "/api/v1/admin/products/bulk-upload",
+    "/api/v1/admin/products/bulk-upload/template",
+    "/api/v1/admin/riders",
+    "/api/v1/admin/riders/:id/status",
+    "/api/v1/admin/roles",
+    "/api/v1/admin/support/tickets",
+    "/api/v1/admin/support/tickets/:id",
+    "/api/v1/admin/support/tickets/:id/assign",
+    "/api/v1/admin/support/tickets/:id/notes",
+    "/api/v1/admin/users",
+    "/api/v1/admin/users/:id",
+    "/api/v1/admin/users/verification/send-otp",
+    "/api/v1/admin/users/verification/verify-otp",
+    "/api/v1/admin/vendor/vendors",
+    "/api/v1/admin/vendor/vendors/:id/stage",
+    "/api/v1/customer/addresses",
+    "/api/v1/customer/addresses/:id",
+    "/api/v1/customer/addresses/:id/default",
+    "/api/v1/customer/addresses/default",
+    "/api/v1/customer/admin/categories",
+    "/api/v1/customer/admin/categories/:id",
+    "/api/v1/customer/admin/categories/all",
+    "/api/v1/customer/admin/cms/media",
+    "/api/v1/customer/admin/cms/media/:id",
+    "/api/v1/customer/admin/cms/pages",
+    "/api/v1/customer/admin/cms/pages/:id",
+    "/api/v1/customer/admin/coupons",
+    "/api/v1/customer/admin/coupons/:id",
+    "/api/v1/customer/admin/home/sections",
+    "/api/v1/customer/admin/home/sections/:id",
+    "/api/v1/customer/admin/home/sections/reorder",
+    "/api/v1/customer/admin/merch/stores",
+    "/api/v1/customer/app-config",
+    "/api/v1/customer/auth",
+    "/api/v1/customer/auth/link-phone/send-otp",
+    "/api/v1/customer/auth/link-phone/verify-otp",
+    "/api/v1/customer/auth/logout",
+    "/api/v1/customer/auth/resend-otp",
+    "/api/v1/customer/auth/send-otp",
+    "/api/v1/customer/auth/verify-otp",
+    "/api/v1/customer/banners",
+    "/api/v1/customer/bootstrap",
+    "/api/v1/customer/cart",
+    "/api/v1/customer/cart/clear",
+    "/api/v1/customer/cart/items",
+    "/api/v1/customer/cart/items/:id",
+    "/api/v1/customer/cart/merge",
+    "/api/v1/customer/categories",
+    "/api/v1/customer/categories/:id",
+    "/api/v1/customer/categories/:id/products",
+    "/api/v1/customer/categories/:id/subcategories",
+    "/api/v1/customer/collections/:id",
+    "/api/v1/customer/coupons",
+    "/api/v1/customer/coupons/redeem",
+    "/api/v1/customer/coupons/validate",
+    "/api/v1/customer/delivery/estimate",
+    "/api/v1/customer/delivery/fee",
+    "/api/v1/customer/faq",
+    "/api/v1/customer/faq/:id/feedback",
+    "/api/v1/customer/home",
+    "/api/v1/customer/legal/accept",
+    "/api/v1/customer/legal/config",
+    "/api/v1/customer/legal/license",
+    "/api/v1/customer/legal/privacy",
+    "/api/v1/customer/legal/terms",
+    "/api/v1/customer/locations/approximate",
+    "/api/v1/customer/locations/suggestions",
+    "/api/v1/customer/notifications",
+    "/api/v1/customer/notifications/:id",
+    "/api/v1/customer/notifications/:id/read",
+    "/api/v1/customer/notifications/:id/unread",
+    "/api/v1/customer/notifications/preferences",
+    "/api/v1/customer/notifications/read-all",
+    "/api/v1/customer/notifications/register-token",
+    "/api/v1/customer/notifications/remove-token",
+    "/api/v1/customer/notifications/unread-count",
+    "/api/v1/customer/onboarding/complete",
+    "/api/v1/customer/onboarding/status",
+    "/api/v1/customer/orders",
+    "/api/v1/customer/orders/:id",
+    "/api/v1/customer/orders/:id/can-cancel",
+    "/api/v1/customer/orders/:id/cancel",
+    "/api/v1/customer/orders/:id/invoice",
+    "/api/v1/customer/orders/:id/rate",
+    "/api/v1/customer/orders/:id/reorder",
+    "/api/v1/customer/orders/:id/status",
+    "/api/v1/customer/orders/:id/tracking",
+    "/api/v1/customer/orders/:id/update-status",
+    "/api/v1/customer/orders/:id/verify-otp",
+    "/api/v1/customer/orders/active",
+    "/api/v1/customer/pages/:id",
+    "/api/v1/customer/payments/methods",
+    "/api/v1/customer/payments/methods/:id",
+    "/api/v1/customer/payments/methods/:id/default",
+    "/api/v1/customer/payments/worldline/abort",
+    "/api/v1/customer/payments/worldline/complete",
+    "/api/v1/customer/payments/worldline/session",
+    "/api/v1/customer/payments/worldline/status",
+    "/api/v1/customer/products/:id",
+    "/api/v1/customer/products/search",
+    "/api/v1/customer/products/search/suggestions",
+    "/api/v1/customer/products/search/trending",
+    "/api/v1/customer/refunds",
+    "/api/v1/customer/refunds/:id",
+    "/api/v1/customer/refunds/:id/details",
+    "/api/v1/customer/refunds/request",
+    "/api/v1/customer/sections/:id/products",
+    "/api/v1/customer/store/:id/inventory",
+    "/api/v1/customer/store/assign",
+    "/api/v1/customer/support/tickets",
+    "/api/v1/customer/support/tickets/:id/messages",
+    "/api/v1/customer/support/tickets/:id/reopen",
+    "/api/v1/customer/support/tickets/active",
+    "/api/v1/customer/user/profile",
+    "/api/v1/customer/wallet/balance",
+    "/api/v1/customer/wallet/debit",
+    "/api/v1/customer/wallet/top-up/session",
+    "/api/v1/customer/wallet/transactions",
+    "/api/v1/darkstore/hsd/fleet",
+    "/api/v1/darkstore/hsd/logs",
+    "/api/v1/darkstore/inbound/putaway",
+    "/api/v1/darkstore/inventory/shelves",
+    "/api/v1/darkstore/inventory/stock-levels",
+    "/api/v1/darkstore/orders/:id/bag-rack",
+    "/api/v1/darkstore/packing/queue",
+    "/api/v1/darkstore/reports/compliance",
+    "/api/v1/darkstore/reports/export",
+    "/api/v1/darkstore/reports/inventory",
+    "/api/v1/darkstore/reports/staff",
+    "/api/v1/darkstore/utilities/audit-logs",
+    "/api/v1/hhd/auth/logout",
+    "/api/v1/hhd/auth/me",
+    "/api/v1/hhd/auth/resend-otp",
+    "/api/v1/hhd/auth/send-otp",
+    "/api/v1/hhd/auth/verify-otp",
+    "/api/v1/hhd/bags/:id",
+    "/api/v1/hhd/bags/scan",
+    "/api/v1/hhd/dashboard",
+    "/api/v1/hhd/devices/current",
+    "/api/v1/hhd/items/:id/not-found",
+    "/api/v1/hhd/items/substitutes",
+    "/api/v1/hhd/orders/:id/status",
+    "/api/v1/hhd/orders/assignorders/:id/status",
+    "/api/v1/hhd/orders/status/pending",
+    "/api/v1/hhd/photos",
+    "/api/v1/hhd/photos/:id/verify",
+    "/api/v1/hhd/pick/report-issue",
+    "/api/v1/hhd/racks/scan",
+    "/api/v1/hhd/scanned-items",
+    "/api/v1/hhd/tasks",
+    "/api/v1/hhd/tasks/:id",
+    "/api/v1/hhd/users/contract",
+    "/api/v1/hhd/users/employment",
+    "/api/v1/hhd/users/heartbeat",
+    "/api/v1/hhd/users/linked-picker-profile",
+    "/api/v1/hhd/users/profile",
+    "/api/v1/picker/attendance",
+    "/api/v1/picker/attendance/punch-in",
+    "/api/v1/picker/attendance/punch-out",
+    "/api/v1/picker/attendance/stats",
+    "/api/v1/picker/attendance/summary",
+    "/api/v1/picker/auth/logout",
+    "/api/v1/picker/auth/refresh",
+    "/api/v1/picker/auth/resend-otp",
+    "/api/v1/picker/auth/resend-otp-email",
+    "/api/v1/picker/auth/send-otp",
+    "/api/v1/picker/auth/send-otp-email",
+    "/api/v1/picker/auth/verify-otp",
+    "/api/v1/picker/auth/verify-otp-email",
+    "/api/v1/picker/bank/accounts",
+    "/api/v1/picker/bank/accounts/:id",
+    "/api/v1/picker/bank/accounts/:id/delete",
+    "/api/v1/picker/bank/accounts/:id/set-default",
+    "/api/v1/picker/bank/verify",
+    "/api/v1/picker/bulk/bag/load",
+    "/api/v1/picker/bulk/batch",
+    "/api/v1/picker/bulk/batches",
+    "/api/v1/picker/bulk/batches/:id",
+    "/api/v1/picker/bulk/start",
+    "/api/v1/picker/bulk/stops/:id/arrive",
+    "/api/v1/picker/bulk/stops/:id/deliver",
+    "/api/v1/picker/bulk/stops/:id/fail",
+    "/api/v1/picker/bulk/stops/:id/proof-photo",
+    "/api/v1/picker/cash/deposits",
+    "/api/v1/picker/cash/summary",
+    "/api/v1/picker/cash/transactions",
+    "/api/v1/picker/config",
+    "/api/v1/picker/config/cancel-reasons",
+    "/api/v1/picker/dark-store-login",
+    "/api/v1/picker/dashboard/today",
+    "/api/v1/picker/devices/assigned",
+    "/api/v1/picker/devices/collection-complete",
+    "/api/v1/picker/devices/return",
+    "/api/v1/picker/documents",
+    "/api/v1/picker/documents/upload",
+    "/api/v1/picker/faq",
+    "/api/v1/picker/heartbeat",
+    "/api/v1/picker/home/summary",
+    "/api/v1/picker/incentives/today",
+    "/api/v1/picker/issues",
+    "/api/v1/picker/legal/privacy",
+    "/api/v1/picker/legal/terms",
+    "/api/v1/picker/locations/set",
+    "/api/v1/picker/locations/set-darkstore-from-current",
+    "/api/v1/picker/locations/track",
+    "/api/v1/picker/manager/request-otp",
+    "/api/v1/picker/manager/verify-otp",
+    "/api/v1/picker/notifications",
+    "/api/v1/picker/notifications/:id/read",
+    "/api/v1/picker/notifications/read-all",
+    "/api/v1/picker/onboarding/kit-ack",
+    "/api/v1/picker/onboarding/state",
+    "/api/v1/picker/onboarding/submit",
+    "/api/v1/picker/performance/history",
+    "/api/v1/picker/performance/summary",
+    "/api/v1/picker/presence/ping",
+    "/api/v1/picker/profile",
+    "/api/v1/picker/push-token",
+    "/api/v1/picker/settings/preferences",
+    "/api/v1/picker/shared-orders/:id",
+    "/api/v1/picker/shared-orders/:id/complete",
+    "/api/v1/picker/shared-orders/:id/proof-photo",
+    "/api/v1/picker/shared-orders/:id/status",
+    "/api/v1/picker/shared-orders/assignorders",
+    "/api/v1/picker/shared-orders/completed",
+    "/api/v1/picker/shifts/available",
+    "/api/v1/picker/shifts/break/end",
+    "/api/v1/picker/shifts/break/start",
+    "/api/v1/picker/shifts/deselect",
+    "/api/v1/picker/shifts/end",
+    "/api/v1/picker/shifts/my",
+    "/api/v1/picker/shifts/readiness",
+    "/api/v1/picker/shifts/select",
+    "/api/v1/picker/shifts/start",
+    "/api/v1/picker/support/chat/messages",
+    "/api/v1/picker/support/tickets",
+    "/api/v1/picker/training/assessment",
+    "/api/v1/picker/training/complete/:id",
+    "/api/v1/picker/training/modules/:id/complete",
+    "/api/v1/picker/training/user-progress",
+    "/api/v1/picker/training/videos",
+    "/api/v1/picker/training/videos/:id",
+    "/api/v1/picker/training/watch-progress",
+    "/api/v1/picker/uploads",
+    "/api/v1/picker/user/location-type",
+    "/api/v1/picker/user/profile",
+    "/api/v1/picker/user/profile/overview",
+    "/api/v1/picker/user/upi",
+    "/api/v1/picker/verify/face",
+    "/api/v1/picker/wallet",
+    "/api/v1/picker/wallet/balance",
+    "/api/v1/picker/wallet/deposit",
+    "/api/v1/picker/wallet/earnings-breakdown",
+    "/api/v1/picker/wallet/history",
+    "/api/v1/picker/wallet/transactions",
+    "/api/v1/picker/wallet/transactions/:id",
+    "/api/v1/picker/wallet/withdraw",
+    "/api/v1/picker/wallet/withdrawal-requests/:id",
+    "/api/v1/picker/work-locations",
+    "/api/v1/rider/dispatch/map/riders",
+    "/api/v1/rider/fleet/summary",
+    "/api/v1/warehouse/inbound/grns",
+    "/api/v1/warehouse/inbound/grns/:id/discrepancy",
+    "/api/v1/warehouse/inventory/items",
+    "/api/v1/warehouse/qc/inspections",
+    "/api/v1/warehouse/staff/shifts",
+    "/api/v1/warehouse/staff/shifts/:id",
+    "/api/v1/warehouse/transfers",
+    "/api/v1/warehouse/utilities/zones"
+  ],
+  "pathToApps": {
+    "/api/v1": [
+      "rider-app"
+    ],
+    "/api/v1/admin/analytics/realtime": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/analytics/revenue": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/app-settings": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/audit/logs": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/auth/login": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/customers": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/customers/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/customers/:id/wallet/credit": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/approvals/:id/decision": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/config/commission-slabs": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/picker-withdrawals": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/picker-withdrawals/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/rider-cash/payouts": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/vendor-payments/payments": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/finance/vendor-payments/payments/:id/advance": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/fraud/alerts": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/fraud/alerts/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/integrations/:id/test": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/integrations/health": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/notifications/history": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/notifications/history/:id/retry": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/notifications/templates": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/notifications/templates/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/orders": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/orders/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/orders/:id/logs": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/orders/:id/reassign-picker": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/approvals": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/approvals/:id/decision": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/pickers": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/pickers/:id/assignment": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/shift-change-requests": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/picker/shift-change-requests/:id/decision": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/platform-config": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/platform-config/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/platform-config/workspace/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/products": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/products/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/products/bulk-upload": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/products/bulk-upload/template": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/riders": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/riders/:id/status": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/roles": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/support/tickets": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/support/tickets/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/support/tickets/:id/assign": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/support/tickets/:id/notes": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/users": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/users/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/users/verification/send-otp": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/users/verification/verify-otp": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/vendor/vendors": [
+      "admin-dashboard"
+    ],
+    "/api/v1/admin/vendor/vendors/:id/stage": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/addresses": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/addresses/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/addresses/:id/default": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/addresses/default": [
+      "customer-app"
+    ],
+    "/api/v1/customer/admin/categories": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/categories/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/categories/all": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/cms/media": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/cms/media/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/cms/pages": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/cms/pages/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/coupons": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/coupons/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/home/sections": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/home/sections/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/home/sections/reorder": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/admin/merch/stores": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/app-config": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/auth": [
+      "customer-app"
+    ],
+    "/api/v1/customer/auth/link-phone/send-otp": [
+      "customer-web"
+    ],
+    "/api/v1/customer/auth/link-phone/verify-otp": [
+      "customer-web"
+    ],
+    "/api/v1/customer/auth/logout": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/auth/resend-otp": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/auth/send-otp": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/auth/verify-otp": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/banners": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/bootstrap": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/cart": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/cart/clear": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/cart/items": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/cart/items/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/cart/merge": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/categories": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/categories/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/categories/:id/products": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/categories/:id/subcategories": [
+      "customer-app"
+    ],
+    "/api/v1/customer/collections/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/coupons": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/coupons/redeem": [
+      "customer-app"
+    ],
+    "/api/v1/customer/coupons/validate": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/delivery/estimate": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/delivery/fee": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/faq": [
+      "customer-web"
+    ],
+    "/api/v1/customer/faq/:id/feedback": [
+      "customer-web"
+    ],
+    "/api/v1/customer/home": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/legal/accept": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/legal/config": [
+      "customer-app"
+    ],
+    "/api/v1/customer/legal/license": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/legal/privacy": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/legal/terms": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/locations/approximate": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/locations/suggestions": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/:id/read": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/:id/unread": [
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/preferences": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/read-all": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/notifications/register-token": [
+      "customer-app"
+    ],
+    "/api/v1/customer/notifications/remove-token": [
+      "customer-app"
+    ],
+    "/api/v1/customer/notifications/unread-count": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/onboarding/complete": [
+      "customer-web"
+    ],
+    "/api/v1/customer/onboarding/status": [
+      "customer-web"
+    ],
+    "/api/v1/customer/orders": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/can-cancel": [
+      "customer-app"
+    ],
+    "/api/v1/customer/orders/:id/cancel": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/invoice": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/rate": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/reorder": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/status": [
+      "customer-app"
+    ],
+    "/api/v1/customer/orders/:id/tracking": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/orders/:id/update-status": [
+      "admin-dashboard"
+    ],
+    "/api/v1/customer/orders/:id/verify-otp": [
+      "customer-app"
+    ],
+    "/api/v1/customer/orders/active": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/pages/:id": [
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/methods": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/methods/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/methods/:id/default": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/worldline/abort": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/worldline/complete": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/worldline/session": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/payments/worldline/status": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/products/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/products/search": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/products/search/suggestions": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/products/search/trending": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/refunds": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/refunds/:id": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/refunds/:id/details": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/refunds/request": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/sections/:id/products": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/store/:id/inventory": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/store/assign": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/support/tickets": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/support/tickets/:id/messages": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/support/tickets/:id/reopen": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/support/tickets/active": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/user/profile": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/wallet/balance": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/wallet/debit": [
+      "customer-app"
+    ],
+    "/api/v1/customer/wallet/top-up/session": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/customer/wallet/transactions": [
+      "customer-app",
+      "customer-web"
+    ],
+    "/api/v1/darkstore/hsd/fleet": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/hsd/logs": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/inbound/putaway": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/inventory/shelves": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/inventory/stock-levels": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/orders/:id/bag-rack": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/packing/queue": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/reports/compliance": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/reports/export": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/reports/inventory": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/reports/staff": [
+      "admin-dashboard"
+    ],
+    "/api/v1/darkstore/utilities/audit-logs": [
+      "admin-dashboard"
+    ],
+    "/api/v1/hhd/auth/logout": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/auth/me": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/auth/resend-otp": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/auth/send-otp": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/auth/verify-otp": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/bags/:id": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/bags/scan": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/dashboard": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/devices/current": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/items/:id/not-found": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/items/substitutes": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/orders/:id/status": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/orders/assignorders/:id/status": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/orders/status/pending": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/photos": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/photos/:id/verify": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/pick/report-issue": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/racks/scan": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/scanned-items": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/tasks": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/tasks/:id": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/users/contract": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/users/employment": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/users/heartbeat": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/users/linked-picker-profile": [
+      "hhd-app"
+    ],
+    "/api/v1/hhd/users/profile": [
+      "hhd-app"
+    ],
+    "/api/v1/picker/attendance": [
+      "picker-app"
+    ],
+    "/api/v1/picker/attendance/punch-in": [
+      "picker-app"
+    ],
+    "/api/v1/picker/attendance/punch-out": [
+      "picker-app"
+    ],
+    "/api/v1/picker/attendance/stats": [
+      "picker-app"
+    ],
+    "/api/v1/picker/attendance/summary": [
+      "picker-app"
+    ],
+    "/api/v1/picker/auth/logout": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/refresh": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/resend-otp": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/resend-otp-email": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/send-otp": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/send-otp-email": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/auth/verify-otp": [
+      "picker-app"
+    ],
+    "/api/v1/picker/auth/verify-otp-email": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bank/accounts": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bank/accounts/:id": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bank/accounts/:id/delete": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bank/accounts/:id/set-default": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bank/verify": [
+      "picker-app"
+    ],
+    "/api/v1/picker/bulk/bag/load": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/batch": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/batches": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/batches/:id": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/start": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/stops/:id/arrive": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/stops/:id/deliver": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/stops/:id/fail": [
+      "rider-app"
+    ],
+    "/api/v1/picker/bulk/stops/:id/proof-photo": [
+      "rider-app"
+    ],
+    "/api/v1/picker/cash/deposits": [
+      "rider-app"
+    ],
+    "/api/v1/picker/cash/summary": [
+      "rider-app"
+    ],
+    "/api/v1/picker/cash/transactions": [
+      "rider-app"
+    ],
+    "/api/v1/picker/config": [
+      "rider-app"
+    ],
+    "/api/v1/picker/config/cancel-reasons": [
+      "rider-app"
+    ],
+    "/api/v1/picker/dark-store-login": [
+      "picker-app"
+    ],
+    "/api/v1/picker/dashboard/today": [
+      "rider-app"
+    ],
+    "/api/v1/picker/devices/assigned": [
+      "picker-app"
+    ],
+    "/api/v1/picker/devices/collection-complete": [
+      "picker-app"
+    ],
+    "/api/v1/picker/devices/return": [
+      "picker-app"
+    ],
+    "/api/v1/picker/documents": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/documents/upload": [
+      "picker-app"
+    ],
+    "/api/v1/picker/faq": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/heartbeat": [
+      "picker-app"
+    ],
+    "/api/v1/picker/home/summary": [
+      "picker-app"
+    ],
+    "/api/v1/picker/incentives/today": [
+      "rider-app"
+    ],
+    "/api/v1/picker/issues": [
+      "picker-app"
+    ],
+    "/api/v1/picker/legal/privacy": [
+      "rider-app"
+    ],
+    "/api/v1/picker/legal/terms": [
+      "rider-app"
+    ],
+    "/api/v1/picker/locations/set": [
+      "picker-app"
+    ],
+    "/api/v1/picker/locations/set-darkstore-from-current": [
+      "picker-app"
+    ],
+    "/api/v1/picker/locations/track": [
+      "rider-app"
+    ],
+    "/api/v1/picker/manager/request-otp": [
+      "picker-app"
+    ],
+    "/api/v1/picker/manager/verify-otp": [
+      "picker-app"
+    ],
+    "/api/v1/picker/notifications": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/notifications/:id/read": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/notifications/read-all": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/onboarding/kit-ack": [
+      "rider-app"
+    ],
+    "/api/v1/picker/onboarding/state": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/onboarding/submit": [
+      "rider-app"
+    ],
+    "/api/v1/picker/performance/history": [
+      "picker-app"
+    ],
+    "/api/v1/picker/performance/summary": [
+      "picker-app"
+    ],
+    "/api/v1/picker/presence/ping": [
+      "picker-app"
+    ],
+    "/api/v1/picker/profile": [
+      "rider-app"
+    ],
+    "/api/v1/picker/push-token": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/settings/preferences": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/:id": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/:id/complete": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/:id/proof-photo": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/:id/status": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/assignorders": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shared-orders/completed": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/available": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/break/end": [
+      "picker-app"
+    ],
+    "/api/v1/picker/shifts/break/start": [
+      "picker-app"
+    ],
+    "/api/v1/picker/shifts/deselect": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/end": [
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/my": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/readiness": [
+      "picker-app"
+    ],
+    "/api/v1/picker/shifts/select": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/shifts/start": [
+      "rider-app"
+    ],
+    "/api/v1/picker/support/chat/messages": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/support/tickets": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/training/assessment": [
+      "picker-app"
+    ],
+    "/api/v1/picker/training/complete/:id": [
+      "picker-app"
+    ],
+    "/api/v1/picker/training/modules/:id/complete": [
+      "picker-app"
+    ],
+    "/api/v1/picker/training/user-progress": [
+      "picker-app"
+    ],
+    "/api/v1/picker/training/videos": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/training/videos/:id": [
+      "picker-app"
+    ],
+    "/api/v1/picker/training/watch-progress": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/uploads": [
+      "rider-app"
+    ],
+    "/api/v1/picker/user/location-type": [
+      "picker-app"
+    ],
+    "/api/v1/picker/user/profile": [
+      "picker-app"
+    ],
+    "/api/v1/picker/user/profile/overview": [
+      "picker-app"
+    ],
+    "/api/v1/picker/user/upi": [
+      "picker-app"
+    ],
+    "/api/v1/picker/verify/face": [
+      "picker-app"
+    ],
+    "/api/v1/picker/wallet": [
+      "rider-app"
+    ],
+    "/api/v1/picker/wallet/balance": [
+      "picker-app"
+    ],
+    "/api/v1/picker/wallet/deposit": [
+      "picker-app"
+    ],
+    "/api/v1/picker/wallet/earnings-breakdown": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/wallet/history": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/wallet/transactions": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/picker/wallet/transactions/:id": [
+      "picker-app"
+    ],
+    "/api/v1/picker/wallet/withdraw": [
+      "picker-app"
+    ],
+    "/api/v1/picker/wallet/withdrawal-requests/:id": [
+      "picker-app"
+    ],
+    "/api/v1/picker/work-locations": [
+      "picker-app",
+      "rider-app"
+    ],
+    "/api/v1/rider/dispatch/map/riders": [
+      "admin-dashboard"
+    ],
+    "/api/v1/rider/fleet/summary": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/inbound/grns": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/inbound/grns/:id/discrepancy": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/inventory/items": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/qc/inspections": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/staff/shifts": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/staff/shifts/:id": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/transfers": [
+      "admin-dashboard"
+    ],
+    "/api/v1/warehouse/utilities/zones": [
+      "admin-dashboard"
+    ]
+  },
+  "notes": {
+    "riderAppUsesPickerInfrastructure": true,
+    "riderAppPickerPaths": [
+      "/api/v1/picker/auth/logout",
+      "/api/v1/picker/auth/refresh",
+      "/api/v1/picker/auth/resend-otp",
+      "/api/v1/picker/auth/resend-otp-email",
+      "/api/v1/picker/auth/send-otp",
+      "/api/v1/picker/auth/send-otp-email",
+      "/api/v1/picker/bulk/bag/load",
+      "/api/v1/picker/bulk/batch",
+      "/api/v1/picker/bulk/batches",
+      "/api/v1/picker/bulk/batches/:id",
+      "/api/v1/picker/bulk/start",
+      "/api/v1/picker/bulk/stops/:id/arrive",
+      "/api/v1/picker/bulk/stops/:id/deliver",
+      "/api/v1/picker/bulk/stops/:id/fail",
+      "/api/v1/picker/bulk/stops/:id/proof-photo",
+      "/api/v1/picker/cash/deposits",
+      "/api/v1/picker/cash/summary",
+      "/api/v1/picker/cash/transactions",
+      "/api/v1/picker/config",
+      "/api/v1/picker/config/cancel-reasons",
+      "/api/v1/picker/dashboard/today",
+      "/api/v1/picker/documents",
+      "/api/v1/picker/faq",
+      "/api/v1/picker/incentives/today",
+      "/api/v1/picker/legal/privacy",
+      "/api/v1/picker/legal/terms",
+      "/api/v1/picker/locations/track",
+      "/api/v1/picker/notifications",
+      "/api/v1/picker/notifications/:id/read",
+      "/api/v1/picker/notifications/read-all",
+      "/api/v1/picker/onboarding/kit-ack",
+      "/api/v1/picker/onboarding/state",
+      "/api/v1/picker/onboarding/submit",
+      "/api/v1/picker/profile",
+      "/api/v1/picker/push-token",
+      "/api/v1/picker/settings/preferences",
+      "/api/v1/picker/shared-orders/:id",
+      "/api/v1/picker/shared-orders/:id/complete",
+      "/api/v1/picker/shared-orders/:id/proof-photo",
+      "/api/v1/picker/shared-orders/:id/status",
+      "/api/v1/picker/shared-orders/assignorders",
+      "/api/v1/picker/shared-orders/completed",
+      "/api/v1/picker/shifts/available",
+      "/api/v1/picker/shifts/deselect",
+      "/api/v1/picker/shifts/end",
+      "/api/v1/picker/shifts/my",
+      "/api/v1/picker/shifts/select",
+      "/api/v1/picker/shifts/start",
+      "/api/v1/picker/support/chat/messages",
+      "/api/v1/picker/support/tickets",
+      "/api/v1/picker/training/videos",
+      "/api/v1/picker/training/watch-progress",
+      "/api/v1/picker/uploads",
+      "/api/v1/picker/wallet",
+      "/api/v1/picker/wallet/earnings-breakdown",
+      "/api/v1/picker/wallet/history",
+      "/api/v1/picker/wallet/transactions",
+      "/api/v1/picker/work-locations"
+    ],
+    "riderAppPickerPathCount": 58,
+    "legacyPaymentApiPathsInFrontends": [],
+    "scanScope": {
+      "customer-app": {
+        "root": "C:/Users/lmbac/Desktop/Selorg V1.3/selorg-customer-app",
+        "basePrefix": "/api/v1/customer"
+      },
+      "customer-web": {
+        "root": "C:/Users/lmbac/Desktop/Selorg V1.3/Selorg Webapp V1.3",
+        "basePrefix": "/api/v1/customer"
+      },
+      "picker-app": {
+        "root": "C:/Users/lmbac/Desktop/Selorg V1.3/Selorg PickerApp V1.3",
+        "basePrefix": "/api/v1/picker"
+      },
+      "rider-app": {
+        "root": "C:/Users/lmbac/Desktop/Selorg V1.3/Selorg-RiderApp-v1.3",
+        "basePrefix": "/api/v1"
+      },
+      "hhd-app": {
+        "root": "C:/Users/lmbac/Desktop/Selorg V1.3/Selorg HSD-app V1.3",
+        "basePrefix": "/api/v1/hhd"
+      },
+      "admin-dashboard": {
+        "root": "C:/js/selorgdashboard",
+        "basePrefix": null
+      }
+    }
+  }
+}
