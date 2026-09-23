@@ -11,7 +11,7 @@ import {
   HHDInventory,
   IHHDOrder,
 } from './hhd.models';
-import { ITEM_STATUS, INVENTORY_STATUS } from './hhd.constants';
+import { ITEM_STATUS, INVENTORY_STATUS, ORDER_STATUS } from './hhd.constants';
 import { mapItemView, computeOrderProgress } from './hhd.mappers';
 import { readIdempotencyKey, withHhdIdempotency } from './hhd.idempotency';
 import { registerPickScan } from './hhd.scan.service';
@@ -392,6 +392,39 @@ export async function updateItem(req: Request, res: Response, next: NextFunction
     if (notes != null) item.notes = String(notes).slice(0, 500);
     await item.save();
 
+    res.status(200).json(ResponseFormatter.success(mapItemView(item)));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/** PUT /items/:itemId/unscan — remove one confirmed unit while the order is still being picked. */
+export async function unscanItem(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const { itemId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      return next(new AppError('itemId must be a valid ObjectId', 400, 'VALIDATION_ERROR'));
+    }
+    const item = await HHDItem.findById(itemId);
+    if (!item) {
+      return next(new AppError(`Item not found with id of ${itemId}`, 404, 'NOT_FOUND'));
+    }
+    const order = await assertOrderOwnership(item.orderId, userId);
+    if (order.status !== ORDER_STATUS.PICKING && order.status !== ORDER_STATUS.BAG_SCANNED) {
+      return next(
+        new AppError('Quantity can only be reduced while picking', 409, 'INVALID_TRANSITION'),
+      );
+    }
+    const scanned = Number(item.scannedQuantity ?? 0);
+    if (scanned <= 0) {
+      return next(new AppError('This item has no picked quantity to remove', 409, 'INVALID_TRANSITION'));
+    }
+    item.scannedQuantity = scanned - 1;
+    if (item.scannedQuantity < Number(item.quantity ?? 1)) {
+      item.status = ITEM_STATUS.PENDING;
+    }
+    await item.save();
     res.status(200).json(ResponseFormatter.success(mapItemView(item)));
   } catch (error) {
     next(error);

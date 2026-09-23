@@ -740,6 +740,77 @@ export async function createGRN(req: Request, res: Response, next: NextFunction)
   }
 }
 
+/** Expected stock / ASN list — pending inbound GRNs declared before receiving starts. */
+export async function getASNs(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const wk = req.user!.warehouseKey!;
+    const status = String(req.query.status || 'pending');
+    const filter: Record<string, unknown> =
+      status === 'all'
+        ? {}
+        : { status: status === 'expected' || status === 'pending' ? 'pending' : status };
+    const grns = await GRN.find(mergeWarehouseFilter(filter, wk)).sort({ timestamp: -1 }).lean();
+    const asns = grns.map((g) => ({
+      asn_id: g.id,
+      id: g.id,
+      poNumber: g.poNumber,
+      vendor: g.vendor,
+      supplier: g.vendor,
+      expected_qty: g.items,
+      items: g.items,
+      status: g.status === 'pending' ? 'expected' : g.status,
+      expected_date: g.timestamp,
+      timestamp: g.timestamp,
+    }));
+    res.json({ success: true, data: asns, meta: { count: asns.length } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Create an expected stock / ASN record (stored as pending GRN until receiving starts). */
+export async function createASN(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const wk = req.user!.warehouseKey!;
+    const body = req.body as {
+      poNumber?: string;
+      vendor?: string;
+      supplier?: string;
+      items?: number;
+      expected_qty?: number;
+    };
+    const poNumber = String(body.poNumber || '').trim();
+    const vendor = String(body.vendor || body.supplier || '').trim();
+    const items = Number(body.items ?? body.expected_qty ?? 0);
+    if (!poNumber) { res.status(400).json({ success: false, message: 'poNumber is required' }); return; }
+    if (!vendor) { res.status(400).json({ success: false, message: 'vendor is required' }); return; }
+    const id = `ASN-${Date.now()}`;
+    const grn = await GRN.create({
+      id,
+      poNumber,
+      vendor,
+      items: Number.isFinite(items) ? Math.max(0, items) : 0,
+      status: 'pending',
+      timestamp: new Date(),
+      ...warehouseFieldsForCreate(wk),
+    });
+    res.status(201).json({
+      success: true,
+      data: {
+        asn_id: grn.id,
+        id: grn.id,
+        poNumber: grn.poNumber,
+        vendor: grn.vendor,
+        expected_qty: grn.items,
+        status: 'expected',
+        expected_date: grn.timestamp,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function exportGRNs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const wk = req.user!.warehouseKey!;
@@ -939,7 +1010,67 @@ export async function createAdjustment(req: Request, res: Response, next: NextFu
   try {
     const wk = req.user!.warehouseKey!;
     const id = `ADJ-${Date.now()}`;
-    const adj = await InventoryAdjustment.create({ ...req.body, id, user: req.user!.userId, timestamp: new Date(), ...warehouseFieldsForCreate(wk) });
+    const body = req.body as {
+      type?: string;
+      sku?: string;
+      productName?: string;
+      change?: number;
+      reason?: string;
+      physical_qty?: number;
+      system_qty?: number;
+      inventoryId?: string;
+    };
+    const sku = String(body.sku || 'UNKNOWN').trim();
+    const system = Number(body.system_qty);
+    const physical = Number(body.physical_qty);
+    let change = Number(body.change);
+    if (!Number.isFinite(change) && Number.isFinite(physical) && Number.isFinite(system)) {
+      change = physical - system;
+    }
+    if (!Number.isFinite(change)) change = 0;
+    const type =
+      body.type ||
+      (change === 0 ? 'Cycle Count Adj.' : change > 0 ? 'Found Items' : 'Manual Adjustment');
+    const adj = await InventoryAdjustment.create({
+      id,
+      type,
+      sku,
+      productName: String(body.productName || sku),
+      change,
+      reason: String(body.reason || 'Stock audit adjustment'),
+      user: req.user!.userId || req.user!.email || 'admin',
+      timestamp: new Date(),
+      ...warehouseFieldsForCreate(wk),
+    });
+
+    // Apply quantity to admin warehouse inventory when inventoryId or sku provided
+    try {
+      const { WarehouseInventory } = await import('../products/store-inventory.model');
+      if (body.inventoryId) {
+        const nextQty = Number.isFinite(physical) ? Math.max(0, physical) : undefined;
+        if (nextQty !== undefined) {
+          await WarehouseInventory.findByIdAndUpdate(body.inventoryId, { $set: { quantity: nextQty } });
+        } else {
+          await WarehouseInventory.findByIdAndUpdate(body.inventoryId, { $inc: { quantity: change } });
+        }
+      } else if (sku && sku !== 'UNKNOWN') {
+        const { Product } = await import('../products/products.model');
+        const product = await Product.findOne({ sku }).select('_id').lean();
+        if (product?._id) {
+          const row = await WarehouseInventory.findOne({ productId: product._id }).sort({ updatedAt: -1 });
+          if (row) {
+            const nextQty = Number.isFinite(physical)
+              ? Math.max(0, physical)
+              : Math.max(0, Number(row.quantity || 0) + change);
+            row.quantity = nextQty;
+            await row.save();
+          }
+        }
+      }
+    } catch {
+      /* inventory apply is best-effort; adjustment log is source of truth */
+    }
+
     res.status(201).json({ success: true, data: adj });
   } catch (err) {
     next(err);

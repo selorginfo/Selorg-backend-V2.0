@@ -13,6 +13,13 @@ export interface IPage extends Document {
   slug: string;
   title: string;
   status: 'draft' | 'published';
+  /** Admin content-pipeline stage (broader than publish status). */
+  stage?: string;
+  surface?: string;
+  type?: string;
+  author?: string;
+  placement?: string;
+  schedule?: string;
   blocks: Array<{
     type: string;
     order: number;
@@ -60,6 +67,17 @@ const pageSchema = new Schema<IPage>(
     slug: { type: String, required: true, index: true },
     title: { type: String, default: '' },
     status: { type: String, enum: ['draft', 'published'], default: 'draft', index: true },
+    stage: {
+      type: String,
+      enum: ['Draft', 'In review', 'Approved', 'Scheduled', 'Published', 'Archived'],
+      default: 'Draft',
+      index: true,
+    },
+    surface: { type: String, default: 'Customer app', index: true },
+    type: { type: String, default: 'Page' },
+    author: { type: String, default: 'Admin' },
+    placement: { type: String, default: '' },
+    schedule: { type: String, default: '' },
     blocks: [pageBlockSchema],
     version: { type: Number, default: 1 },
     publishedAt: Date,

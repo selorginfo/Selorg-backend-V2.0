@@ -85,6 +85,8 @@ export interface IOrder extends Document {
     longitude?: number;
   };
   deliveryNotes: string;
+  customerName: string;
+  customerPhone: string;
   deliveryMode?: 'express' | 'scheduled';
   deliverySlotId?: string;
   deliverySlotLabel?: string;
@@ -179,6 +181,8 @@ const orderSchema = new Schema<IOrder>(
       longitude: Number,
     },
     deliveryNotes: { type: String, default: '' },
+    customerName: { type: String, default: '' },
+    customerPhone: { type: String, default: '' },
     deliveryMode: { type: String, enum: ['express', 'scheduled'], default: 'express' },
     deliverySlotId: { type: String, default: '' },
     deliverySlotLabel: { type: String, default: '' },

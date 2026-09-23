@@ -27,5 +27,10 @@ adminOrderRouter.get('/', authenticateAdmin, orderController.adminList);
 adminOrderRouter.get('/:id', authenticateAdmin, orderController.adminGetDetail);
 adminOrderRouter.get('/:id/logs', authenticateAdmin, orderController.adminGetLogs);
 adminOrderRouter.put('/:id/update-status', authenticateAdmin, validate(updateOrderStatusSchema), orderController.updateStatus);
+adminOrderRouter.post('/:id/notes', authenticateAdmin, orderController.adminAddNote);
+adminOrderRouter.post('/:id/reassign-picker', authenticateAdmin, orderController.adminReassignPicker);
+adminOrderRouter.post('/:id/reassign-rider', authenticateAdmin, orderController.adminReassignRider);
+adminOrderRouter.post('/:id/contact', authenticateAdmin, orderController.adminContactCustomer);
+adminOrderRouter.post('/:id/refund', authenticateAdmin, orderController.adminInitiateRefund);
 
 export default router;

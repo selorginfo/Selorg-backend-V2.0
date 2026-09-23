@@ -59,6 +59,16 @@ function isGatewayPrepayment(resolvedMethodType?: string): boolean {
   return resolvedMethodType === 'card' || resolvedMethodType === 'upi' || resolvedMethodType === 'digital';
 }
 
+/** Indian mobile: 10 digits starting 6–9. Accepts a leading 0 or 91. */
+function normalizeIndianMobile(value: unknown): string | null {
+  const digits = String(value || '').replace(/\D/g, '');
+  let mobile = digits;
+  if (digits.length === 12 && digits.startsWith('91')) mobile = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith('0')) mobile = digits.slice(1);
+  else if (digits.length !== 10) return null;
+  return /^[6-9]\d{9}$/.test(mobile) ? mobile : null;
+}
+
 function isWalletCheckoutRequest(methodType?: string): boolean {
   const key = String(methodType || '').trim().toLowerCase();
   return key === 'wallet' || key === 'selorg_wallet';
@@ -171,9 +181,13 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
           state: deliveryAddress.state || '',
           pincode: deliveryAddress.pincode || '',
           landmark: deliveryAddress.landmark,
+          latitude: deliveryAddress.latitude,
+          longitude: deliveryAddress.longitude,
         }
       : {},
     deliveryNotes: o.deliveryNotes || '',
+    customerName: o.customerName || '',
+    customerPhone: o.customerPhone || '',
     deliveryMode: o.deliveryMode || 'express',
     deliverySlotId: o.deliverySlotId || '',
     deliverySlotLabel: o.deliverySlotLabel || '',
@@ -418,8 +432,10 @@ export async function reconcileOrderWithLatestWorldlinePayment(userId: string, o
     return;
   }
 
-  if ((latest.status === 'failed' || latest.status === 'cancelled') && verified) {
-    if (order.fulfillmentReleased !== true) {
+  // A failed or cancelled gateway attempt must not leave a successful order,
+  // even when the hash could not be verified.
+  if (latest.status === 'failed' || latest.status === 'cancelled') {
+    if (order.fulfillmentReleased !== true && order.paymentStatus !== 'paid') {
       await voidUnpaidOnlineOrder(userId, orderId, latest.statusMessage || 'Payment failed', latest.status === 'cancelled' ? 'cancelled' : 'failed');
     }
     return;
@@ -476,6 +492,24 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
 
   const address = await CustomerAddress.findOne({ _id: addressId, userId }).lean();
   if (!address) return { error: 'Address not found' };
+
+  const account = await CustomerUser.findById(userId).select('name phoneNumber').lean();
+  const accountPhone = normalizeIndianMobile(account?.phoneNumber);
+  const customerName = String(body.customerName || account?.name || '').trim();
+  const requestedPhone = String(body.customerPhone || '').trim();
+  // Receiver number is only sent when the order is for someone else. It must be a
+  // valid Indian mobile, and it does not have to match the account's verified number.
+  let customerPhone = accountPhone || '';
+  if (requestedPhone) {
+    const receiverPhone = normalizeIndianMobile(requestedPhone);
+    if (!receiverPhone) {
+      return { error: 'Enter a valid 10-digit mobile number starting with 6, 7, 8, or 9.' };
+    }
+    if (customerName.length < 2) {
+      return { error: 'Receiver name is required when ordering for someone else.' };
+    }
+    customerPhone = receiverPhone;
+  }
 
   const { resolveDeliverySlotOption } = await import('../delivery/delivery.service');
   const slotOptionId = String(body.deliverySlotOptionId || (body.deliveryMode === 'scheduled' ? '' : 'now')).trim() || 'now';
@@ -716,6 +750,8 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
               longitude: deliveryLongitude,
             },
             deliveryNotes: body.deliveryNotes || '',
+            customerName,
+            customerPhone,
             deliveryMode,
             deliverySlotId,
             deliverySlotLabel,
@@ -830,7 +866,7 @@ const STATUS_NOTE_MAP: Record<string, string> = {
 
 export async function updateCustomerOrderStatus(orderId: string, newStatus: string, opts: { actor?: string; note?: string; riderId?: string } = {}): Promise<Record<string, unknown> | { error: string }> {
   const { actor, note, riderId } = opts;
-  const order = await orderRepo.findById(orderId);
+  const order = await findOrderDoc(orderId);
   if (!order) return { error: 'Order not found' };
 
   const allowed = VALID_TRANSITIONS[order.status];
@@ -1053,4 +1089,178 @@ export async function adminGetOrderLogs(orderId: string): Promise<Array<Record<s
     note: e.note || '',
     actor: e.actor || 'system',
   }));
+}
+
+async function findOrderDoc(orderId: string) {
+  const filter = mongoose.Types.ObjectId.isValid(orderId)
+    ? { _id: orderId }
+    : { orderNumber: orderId };
+  return Order.findOne(filter);
+}
+
+/** Append an admin note to the order timeline without changing status. */
+export async function adminAddOrderNote(
+  orderId: string,
+  opts: { note: string; visibility?: string; actor?: string },
+): Promise<Record<string, unknown> | { error: string }> {
+  const order = await findOrderDoc(orderId);
+  if (!order) return { error: 'Order not found' };
+  const note = String(opts.note || '').trim();
+  if (!note) return { error: 'note is required' };
+  const visibility = opts.visibility ? ` [${opts.visibility}]` : '';
+  order.timeline.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Admin note${visibility}: ${note}`,
+    actor: opts.actor || 'admin',
+  });
+  await order.save();
+  return formatOrderForApp(order.toObject());
+}
+
+/** Assign / reassign picker on the customer Order document + timeline. */
+export async function adminReassignPicker(
+  orderId: string,
+  opts: { pickerId: string; pickerName?: string; reason?: string; note?: string; actor?: string },
+): Promise<Record<string, unknown> | { error: string }> {
+  const order = await findOrderDoc(orderId);
+  if (!order) return { error: 'Order not found' };
+  if (!opts.pickerId) return { error: 'pickerId is required' };
+  if (mongoose.Types.ObjectId.isValid(opts.pickerId)) {
+    order.pickerId = new mongoose.Types.ObjectId(opts.pickerId);
+  }
+  const name = opts.pickerName || opts.pickerId;
+  const reason = opts.reason ? ` (${opts.reason})` : '';
+  const extra = opts.note ? ` — ${opts.note}` : '';
+  order.timeline.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Picker reassigned to ${name}${reason}${extra}`,
+    actor: opts.actor || 'admin',
+  });
+  await order.save();
+  return formatOrderForApp(order.toObject());
+}
+
+/** Assign / reassign rider on the customer Order document + timeline. */
+export async function adminReassignRider(
+  orderId: string,
+  opts: { riderId: string; riderName?: string; reason?: string; note?: string; actor?: string },
+): Promise<Record<string, unknown> | { error: string }> {
+  const order = await findOrderDoc(orderId);
+  if (!order) return { error: 'Order not found' };
+  if (!opts.riderId) return { error: 'riderId is required' };
+  order.riderId = String(opts.riderId);
+  const name = opts.riderName || opts.riderId;
+  const reason = opts.reason ? ` (${opts.reason})` : '';
+  const extra = opts.note ? ` — ${opts.note}` : '';
+  order.timeline.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Rider reassigned to ${name}${reason}${extra}`,
+    actor: opts.actor || 'admin',
+  });
+  await order.save();
+  return formatOrderForApp(order.toObject());
+}
+
+/** Log an admin customer-contact attempt on the order timeline. */
+export async function adminContactCustomer(
+  orderId: string,
+  opts: { channel: string; template?: string; note?: string; actor?: string },
+): Promise<Record<string, unknown> | { error: string }> {
+  const order = await findOrderDoc(orderId);
+  if (!order) return { error: 'Order not found' };
+  if (!opts.channel) return { error: 'channel is required' };
+  const template = opts.template ? ` · ${opts.template}` : '';
+  const extra = opts.note ? ` — ${opts.note}` : '';
+  order.timeline.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Contacted customer via ${opts.channel}${template}${extra}`,
+    actor: opts.actor || 'admin',
+  });
+  await order.save();
+  return formatOrderForApp(order.toObject());
+}
+
+/**
+ * Initiate an admin refund: create RefundRequest, optionally credit wallet,
+ * and stamp the order timeline / refund fields.
+ */
+export async function adminInitiateRefund(
+  orderId: string,
+  opts: {
+    amount: number;
+    method?: string;
+    reason?: string;
+    scope?: string;
+    note?: string;
+    actor?: string;
+  },
+): Promise<Record<string, unknown> | { error: string }> {
+  const order = await findOrderDoc(orderId);
+  if (!order) return { error: 'Order not found' };
+  const amount = Number(opts.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return { error: 'Valid amount is required' };
+
+  const { RefundRequest } = await import('./refund-request.model');
+  const user = order.userId
+    ? await CustomerUser.findById(order.userId).select('name email').lean()
+    : null;
+
+  const refund = await RefundRequest.create({
+    orderId: String(order._id),
+    orderNumber: order.orderNumber,
+    customerId: String(order.userId || ''),
+    customerName: user?.name || user?.email || 'Customer',
+    customerEmail: user?.email || 'no-email@selorg.internal',
+    customerPhone: '',
+    reasonCode: opts.reason || 'admin_initiated',
+    reasonText: opts.note || opts.reason || opts.scope || 'Admin initiated refund',
+    amount,
+    currency: 'INR',
+    status: 'pending',
+    channel: 'ops_adjustment',
+    refundMethod: opts.method?.toLowerCase().includes('wallet') ? 'wallet' : 'original_payment',
+    timeline: [
+      {
+        status: 'pending',
+        timestamp: new Date(),
+        note: `Admin refund initiated (${opts.scope || 'full/partial'})`,
+        actor: opts.actor || 'admin',
+      },
+    ],
+  });
+
+  // Immediate wallet credit when Admin chooses Selorg wallet
+  if (opts.method?.toLowerCase().includes('wallet') && order.userId) {
+    const { creditWallet } = await import('../wallet/wallet.service');
+    await creditWallet(String(order.userId), amount, {
+      source: 'refund',
+      referenceId: `admin-refund-${refund._id}`,
+      referenceType: 'refund',
+      description: opts.reason || 'Admin refund',
+    });
+    refund.status = 'completed';
+    refund.timeline.push({
+      status: 'completed',
+      timestamp: new Date(),
+      note: 'Credited to Selorg wallet',
+      actor: opts.actor || 'admin',
+    });
+    await refund.save();
+  }
+
+  order.refundId = refund._id as unknown as mongoose.Types.ObjectId;
+  order.refundStatus = refund.status;
+  order.refundAmount = amount;
+  order.timeline.push({
+    status: order.status,
+    timestamp: new Date(),
+    note: `Refund initiated ₹${amount} via ${opts.method || 'original'} (${opts.reason || 'admin'})`,
+    actor: opts.actor || 'admin',
+  });
+  await order.save();
+  return formatOrderForApp(order.toObject());
 }

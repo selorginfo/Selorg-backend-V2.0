@@ -143,12 +143,30 @@ export async function test(id: string) {
 }
 
 export async function health() {
-  const integs = await Integration.find({ isActive: true });
+  let integs = await Integration.find({ isActive: true });
+  if (integs.length === 0) {
+    const any = await Integration.find();
+    if (any.length === 0) {
+      await Integration.insertMany(SEED_INTEGRATIONS);
+    } else {
+      // Reactivate seed set so health probes and Test Connection have targets
+      await Integration.updateMany({}, { $set: { isActive: true } });
+    }
+    integs = await Integration.find({ isActive: true });
+  }
   return integs.map((i) => ({
     id: String(i._id),
     serviceKey: i.service,
     displayName: i.name,
+    name: i.name,
+    system: i.name,
     provider: getServiceMeta(i.service).provider,
+    type: getServiceMeta(i.service).category,
+    environment: 'production',
+    lastSync: i.lastSync ? new Date(i.lastSync).toISOString() : null,
+    latency: '—',
+    errors24h: 0,
+    retries: 0,
     status: i.lastSync && Date.now() - new Date(i.lastSync).getTime() < 3600000 ? 'healthy' : 'unknown',
     message: i.lastSync ? `Last sync: ${new Date(i.lastSync).toISOString()}` : 'Never synced',
   }));

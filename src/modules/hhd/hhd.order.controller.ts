@@ -535,6 +535,20 @@ export async function updateOrderStatus(
           throw new AppError(`Order not found with id of ${orderId}`, 404, 'NOT_FOUND');
         }
 
+        // Starting an already-started pick is a resume, not a conflict.
+        if (owned.status === status && status === ORDER_STATUS.PICKING) {
+          const bag = await loadBagForOrder(owned);
+          return { body: mapOrderView(owned, { bag }), statusCode: 200 };
+        }
+
+        if (status === ORDER_STATUS.COMPLETED && !owned.rackLocation) {
+          throw new AppError(
+            'Rack placement is required before the order can be completed',
+            409,
+            'RACK_REQUIRED',
+          );
+        }
+
         assertOrderTransition(owned.status, status);
         await fulfillment.assertCustomerOrderPickable(orderId);
 
@@ -630,12 +644,16 @@ export async function updateAssignOrderStatus(
           }
         }
 
-        // Frontend sends "completed" for confirm-to-photo; allow picking → completed
-        // (also allow picking → photo_verified if client sends that explicitly).
-        const targetStatus =
-          status === ORDER_STATUS.COMPLETED && order.status === ORDER_STATUS.PICKING
-            ? ORDER_STATUS.COMPLETED
-            : status;
+        // Completion is the rack-handover step. Confirm-to-photo must not finish the order.
+        if (status === ORDER_STATUS.COMPLETED && !order.rackLocation) {
+          throw new AppError(
+            'Rack placement is required before the order can be completed',
+            409,
+            'RACK_REQUIRED',
+          );
+        }
+
+        const targetStatus = status;
 
         assertOrderTransition(order.status, targetStatus);
         await fulfillment.assertCustomerOrderPickable(orderId);

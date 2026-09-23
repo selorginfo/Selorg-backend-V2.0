@@ -261,11 +261,7 @@ export function isActivePickStatus(status: string): boolean {
 }
 
 export function frontendOrderStatus(status: string): OrderStatus | string {
-  if (
-    status === ORDER_STATUS.PHOTO_VERIFIED ||
-    status === ORDER_STATUS.RACK_ASSIGNED ||
-    status === ORDER_STATUS.HANDED_OFF
-  ) {
+  if (status === ORDER_STATUS.HANDED_OFF) {
     return ORDER_STATUS.COMPLETED;
   }
   return status;

@@ -8,7 +8,7 @@ export interface CreateOtpSessionParams {
   otp: string;
   channel: string;
   providerResponseId?: string;
-  purpose?: 'login' | 'link_phone';
+  purpose?: 'login' | 'link_phone' | 'delete_account';
   intent?: 'login' | 'signup';
   userId?: string | null;
   ttlSeconds: number;

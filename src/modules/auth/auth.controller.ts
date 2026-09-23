@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { ResponseFormatter } from '../../utils/response';
 import { AppError } from '../../utils/AppError';
 import * as authService from './auth.service';
-import type { SendOtpInput, VerifyOtpInput, ResendOtpInput, LogoutInput, SendLinkPhoneOtpInput, VerifyLinkPhoneOtpInput } from './auth.validation';
+import type { SendOtpInput, VerifyOtpInput, ResendOtpInput, LogoutInput, SendLinkPhoneOtpInput, VerifyLinkPhoneOtpInput, ConfirmDeleteAccountInput } from './auth.validation';
 
 function requesterIp(req: Request): string | undefined {
   return req.ip || req.socket?.remoteAddress || String(req.headers['x-forwarded-for'] || '').split(',')[0]?.trim();
@@ -68,6 +68,29 @@ export async function sendLinkPhoneOtp(req: Request, res: Response, next: NextFu
     const body = req.body as SendLinkPhoneOtpInput;
     const result = await authService.sendLinkPhoneOtp(req.customer._id, body);
     res.status(200).json(ResponseFormatter.success(result, otpSentMessage(result.deliveryStatus)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function sendDeleteAccountOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.customer?._id) throw AppError.unauthorized();
+    const result = await authService.sendDeleteAccountOtp(req.customer._id);
+    res.status(200).json(ResponseFormatter.success(result, otpSentMessage(result.deliveryStatus)));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function confirmDeleteAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.customer?._id) throw AppError.unauthorized();
+    const { sessionId, otp } = req.body as ConfirmDeleteAccountInput;
+    const authHeader = req.headers.authorization;
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    await authService.confirmDeleteAccount(req.customer._id, sessionId, otp, accessToken);
+    res.status(200).json(ResponseFormatter.success(null, 'Your account has been deleted.'));
   } catch (err) {
     next(err);
   }

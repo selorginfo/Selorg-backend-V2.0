@@ -9,6 +9,7 @@ import {
   logoutSchema,
   sendLinkPhoneOtpSchema,
   verifyLinkPhoneOtpSchema,
+  confirmDeleteAccountSchema,
 } from './auth.validation';
 
 const router = Router();
@@ -37,5 +38,8 @@ router.post('/logout', validate(logoutSchema), authController.logout);
 // Authenticated: link/verify a phone number to the current account.
 router.post('/link-phone/send-otp', authenticateCustomer, validate(sendLinkPhoneOtpSchema), authController.sendLinkPhoneOtp);
 router.post('/link-phone/verify-otp', authenticateCustomer, validate(verifyLinkPhoneOtpSchema), authController.verifyLinkPhoneOtp);
+
+router.post('/account/delete/send-otp', authenticateCustomer, authController.sendDeleteAccountOtp);
+router.post('/account/delete/confirm', authenticateCustomer, validate(confirmDeleteAccountSchema), authController.confirmDeleteAccount);
 
 export default router;

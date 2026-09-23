@@ -334,11 +334,14 @@ export async function sendOtp(phone: unknown, options: { preferredChannel?: stri
   }
 
   await storeOtp(trimmed, otp);
+  const delivered = !!delivery.sent;
   return {
     success: true,
-    message: 'OTP sent successfully',
+    message: delivered
+      ? 'OTP sent successfully'
+      : 'Mobile OTP could not be delivered. Sign in with email instead.',
     channel: delivery.channel || channel,
-    deliveryStatus: delivery.sent ? 'sent' : 'failed',
+    deliveryStatus: delivered ? 'sent' : 'failed',
   };
 }
 
@@ -468,7 +471,9 @@ export async function sendOtpEmail(email: unknown): Promise<PickerAuthResult> {
   await storeOtp(identifier, otp);
   return {
     success: true,
-    message: 'OTP sent successfully',
+    message: delivery.sent
+      ? 'OTP sent successfully'
+      : 'Unable to send OTP. Please try again.',
     channel: 'email',
     deliveryStatus: delivery.sent ? 'sent' : 'failed',
   };

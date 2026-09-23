@@ -4,6 +4,7 @@ import { ResponseFormatter } from '../../utils/response';
 import * as svc from './darkstore.service';
 import { WDTransferRequest, WDTransferLog } from '../warehouse/warehouse.models';
 import { WarehouseInventory, StoreInventory } from '../products/store-inventory.model';
+import { DarkStore } from '../store/dark-store.model';
 
 /** Shared 501 for darkstore surfaces that previously answered success without doing work. */
 async function notImplemented(req: Request, res: Response, what: string): Promise<void> {
@@ -13,6 +14,17 @@ async function notImplemented(req: Request, res: Response, what: string): Promis
 
 function storeId(req: Request): string {
   return (req.query.storeId || req.query.store_id || req.body?.store_id || process.env.DEFAULT_STORE_ID || 'DS-Adyar-01') as string;
+}
+
+/** Resolve a dark store Mongo ObjectId from either an ObjectId string or a store code. */
+async function resolveDarkStoreObjectId(idOrCode: string): Promise<mongoose.Types.ObjectId | null> {
+  if (!idOrCode) return null;
+  if (mongoose.isValidObjectId(idOrCode)) {
+    const byId = await DarkStore.findById(idOrCode).select('_id').lean();
+    if (byId?._id) return byId._id as mongoose.Types.ObjectId;
+  }
+  const byCode = await DarkStore.findOne({ code: idOrCode }).select('_id').lean();
+  return byCode?._id ? (byCode._id as mongoose.Types.ObjectId) : null;
 }
 
 function actor(req: Request): string {
@@ -946,9 +958,15 @@ export async function createWDTransferRequest(req: Request, res: Response, next:
 
 export async function getDarkstoreWDTransferRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const dark_store_id = storeId(req);
+    const sid = storeId(req);
+    const storeOid = await resolveDarkStoreObjectId(sid);
     const { status } = req.query;
-    const filter: Record<string, unknown> = { dark_store_id };
+    const filter: Record<string, unknown> = {
+      $or: [
+        { dark_store_id: sid },
+        ...(storeOid ? [{ dark_store_id: String(storeOid) }, { dark_store_id: storeOid }] : []),
+      ],
+    };
     if (status) filter.status = status;
     const requests = await WDTransferRequest.find(filter).sort({ createdAt: -1 }).lean();
     res.json(ResponseFormatter.success(requests));
@@ -973,7 +991,15 @@ export async function getDarkstoreWDTransferLogs(req: Request, res: Response, ne
 export async function receiveWDTransferRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { items } = req.body as { items?: Array<{ sku: string; received_qty: number }> };
-    const request = await WDTransferRequest.findOne({ transfer_id: req.params.id, dark_store_id: storeId(req) });
+    const sid = storeId(req);
+    const storeOid = await resolveDarkStoreObjectId(sid);
+    const request = await WDTransferRequest.findOne({
+      transfer_id: req.params.id,
+      $or: [
+        { dark_store_id: sid },
+        ...(storeOid ? [{ dark_store_id: String(storeOid) }, { dark_store_id: storeOid }] : []),
+      ],
+    });
     if (!request) { res.status(404).json(ResponseFormatter.error('Transfer request not found', 404)); return; }
     if (request.status !== 'dispatched') {
       res.status(400).json(ResponseFormatter.error(`Cannot receive a request with status: ${request.status}`, 400));
@@ -986,6 +1012,16 @@ export async function receiveWDTransferRequest(req: Request, res: Response, next
       ...item,
       received_qty: itemMap.has(item.sku) ? itemMap.get(item.sku)! : item.packed_qty,
     })) as typeof request.items;
+
+    const inventoryStoreId =
+      storeOid ||
+      (mongoose.isValidObjectId(String(request.dark_store_id))
+        ? new mongoose.Types.ObjectId(String(request.dark_store_id))
+        : null);
+    if (!inventoryStoreId) {
+      res.status(400).json(ResponseFormatter.error('Cannot resolve dark store ObjectId for inventory update', 400));
+      return;
+    }
 
     // Update stock: decrease warehouse, increase darkstore
     const session = await mongoose.startSession();
@@ -1002,9 +1038,9 @@ export async function receiveWDTransferRequest(req: Request, res: Response, next
           { session },
         );
 
-        // Increase darkstore stock (upsert)
+        // Increase darkstore stock (upsert) — storeId must be ObjectId
         await StoreInventory.findOneAndUpdate(
-          { storeId: request.dark_store_id, productId: item.product_id },
+          { storeId: inventoryStoreId, productId: item.product_id },
           { $inc: { quantity: qty }, $setOnInsert: { isAvailable: true, reservedQty: 0, lowStockThreshold: 5 } },
           { upsert: true, new: true, session },
         );

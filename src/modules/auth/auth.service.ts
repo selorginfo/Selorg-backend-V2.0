@@ -11,6 +11,7 @@ import { logger } from '../../utils/logger';
 import * as authRepo from './auth.repository';
 import { ICustomerUser, IOtpSession } from './auth.model';
 
+/** Customer sessions last 24 hours. Override with JWT_ACCESS_EXPIRES_SECONDS if product changes this. */
 const ACCESS_EXPIRES_SECONDS = Number(process.env.JWT_ACCESS_EXPIRES_SECONDS) || 60 * 60 * 24;
 
 /**
@@ -60,6 +61,28 @@ function pickTestOtp(digits: string): string | null {
   return appConfig.otp.allowFixedTestOtp && digits === testMobile ? appConfig.otp.testOtp : null;
 }
 
+/** Login is only for accounts created through signup. Unknown phones/emails never get a session. */
+async function assertExistingCustomerForLogin(lookup: {
+  email?: string | null;
+  phoneNumber?: string | null;
+}): Promise<void> {
+  const viaEmail = !!lookup.email;
+  const existing = viaEmail
+    ? await authRepo.findCustomerByEmail(String(lookup.email))
+    : lookup.phoneNumber
+      ? await authRepo.findCustomerByPhone(lookup.phoneNumber)
+      : null;
+  if (!existing) {
+    throw new AppError(
+      viaEmail
+        ? 'No account found for this email. Please sign up first.'
+        : 'No account found for this number. Please sign up first.',
+      404,
+      'USER_NOT_FOUND',
+    );
+  }
+}
+
 /** Provider-agnostic OTP delivery result — both phone and email delivery normalize to this shape. */
 interface OtpDeliveryResult {
   sent: boolean;
@@ -104,7 +127,7 @@ export interface SendOtpParams {
   /**
    * 'login'  -> reject if no customer exists for this phone/email (USER_NOT_FOUND).
    * 'signup' -> proceed; the account is created on verify.
-   * undefined -> legacy auto-upsert behaviour.
+   * undefined -> treated as login. An account must already exist.
    */
   intent?: 'login' | 'signup';
 }
@@ -165,6 +188,8 @@ export interface SendOtpResult {
   resendCooldownSeconds: number;
   deliveryStatus?: 'sent' | 'failed' | 'pending';
   devNote?: string;
+  /** Present for account-deletion OTP so the client can say where the code was sent. */
+  maskedContact?: string;
 }
 
 interface ResolvedDelivery {
@@ -205,8 +230,8 @@ export async function sendOtp(params: SendOtpParams): Promise<SendOtpResult> {
     const normalizedEmail = normalizeEmail(params.email || '');
     if (!normalizedEmail) throw AppError.badRequest('Valid email address required');
 
-    // Login OTP is allowed without an existing account (OTP login = login-or-register).
-    // Signup still rejects emails that already belong to an account.
+    // Signup rejects emails that already belong to an account.
+    // Login rejects emails that have never signed up — do not create an account here.
     if (params.intent === 'signup') {
       const existing = await authRepo.findCustomerByEmail(normalizedEmail);
       if (existing) {
@@ -216,6 +241,8 @@ export async function sendOtp(params: SendOtpParams): Promise<SendOtpResult> {
           'EMAIL_EXISTS',
         );
       }
+    } else {
+      await assertExistingCustomerForLogin({ email: normalizedEmail });
     }
 
     if (!isEmailConfigured() && !(appConfig.otp.devMode || !appConfig.isProduction)) {
@@ -259,8 +286,8 @@ export async function sendOtp(params: SendOtpParams): Promise<SendOtpResult> {
   const digits = normalizePhone(params.phoneNumber);
   if (digits.length !== 10 || /^0+$/.test(digits)) throw AppError.badRequest('phoneNumber must be exactly 10 digits');
 
-  // Login OTP is allowed without an existing account (OTP login = login-or-register).
-  // Signup still rejects phones that already belong to an account.
+  // Signup rejects phones that already belong to an account.
+  // Login rejects phones that have never signed up — do not create an account here.
   if (params.intent === 'signup') {
     const existing = await authRepo.findCustomerByPhone(digits);
     if (existing) {
@@ -270,6 +297,8 @@ export async function sendOtp(params: SendOtpParams): Promise<SendOtpResult> {
         'PHONE_EXISTS',
       );
     }
+  } else {
+    await assertExistingCustomerForLogin({ phoneNumber: digits });
   }
 
   const otp = pickTestOtp(digits) || generateOtp(4);
@@ -336,7 +365,7 @@ export async function verifyOtp(
   if (session.otpExpiresAt && session.otpExpiresAt < new Date()) throw AppError.badRequest('OTP expired');
 
   // Signup still rejects identifiers that already belong to an account.
-  // Login sessions may create the user on first verify (upsertCustomerUser).
+  // Login sessions must already have a customer — verify must not create one.
   if (session.intent === 'signup') {
     const existing = session.email
       ? await authRepo.findCustomerByEmail(session.email)
@@ -353,6 +382,13 @@ export async function verifyOtp(
   }
 
   await checkOtpAttempt(session, otp);
+
+  if (session.intent === 'login') {
+    await assertExistingCustomerForLogin({
+      email: session.email,
+      phoneNumber: session.phoneNumber,
+    });
+  }
 
   session.verified = true;
   session.verifiedAt = new Date();
@@ -566,4 +602,134 @@ export async function verifyLinkPhoneOtp(customerId: string, sessionId: string, 
     phoneVerifiedAt: now,
     avatarUrl: user.avatarUrl || '',
   };
+}
+
+const OPEN_ORDER_STATUSES = ['pending', 'confirmed', 'getting-packed', 'on-the-way', 'arrived'];
+
+async function assertAccountCanBeDeleted(customerId: string): Promise<void> {
+  const mongoose = (await import('mongoose')).default;
+  const userObjectId = new mongoose.Types.ObjectId(customerId);
+  const { Order } = await import('../orders/order.model');
+  const openOrders = await Order.countDocuments({ userId: userObjectId, status: { $in: OPEN_ORDER_STATUSES } });
+  if (openOrders > 0) {
+    throw new AppError(
+      'You have an order in progress. Delete your account after it is delivered or cancelled.',
+      409,
+      'ACCOUNT_HAS_OPEN_ORDERS',
+    );
+  }
+  const { CustomerWallet } = await import('../wallet/wallet.model');
+  const wallet = await CustomerWallet.findOne({ customerId: userObjectId }).select('balance').lean();
+  if (wallet && Number(wallet.balance) > 0) {
+    throw new AppError(
+      'Use your Selorg Wallet balance before deleting your account.',
+      409,
+      'WALLET_BALANCE_REMAINING',
+    );
+  }
+}
+
+/** Sends an OTP to the signed-in customer's verified phone or email before account deletion. */
+export async function sendDeleteAccountOtp(customerId: string): Promise<SendOtpResult> {
+  const user = await authRepo.findCustomerByIdLean(customerId);
+  if (!user) throw AppError.notFound('User');
+  if (user.status === 'inactive') throw new AppError('This account is already closed', 409, 'ACCOUNT_CLOSED');
+  await assertAccountCanBeDeleted(customerId);
+
+  const phone = normalizePhone(user.phoneNumber || '');
+  const email = normalizeEmail(user.email || '');
+  const usePhone = phone.length === 10;
+  if (!usePhone && !email) {
+    throw new AppError('Add a verified mobile number or email before deleting this account', 400, 'NO_CONTACT');
+  }
+
+  const otp = (usePhone ? pickTestOtp(phone) : null) || generateOtp();
+  const devFallback = appConfig.otp.devMode || !appConfig.isProduction;
+
+  const sessionId = await authRepo.createOtpSession({
+    phoneNumber: usePhone ? phone : null,
+    email: usePhone ? null : email,
+    otp,
+    channel: usePhone ? 'sms' : 'email',
+    purpose: 'delete_account',
+    userId: customerId,
+    ttlSeconds: appConfig.otp.ttlSeconds,
+  });
+
+  const target = usePhone ? phone : email!;
+  const raced = await raceOtpDelivery(usePhone ? 'SMS OTP (delete-account)' : 'Email OTP (delete-account)', target, () =>
+    usePhone ? deliverOtpToPhone(phone, otp, 'sms') : deliverOtpToEmail(email!, otp),
+  );
+  const delivery = resolveDelivery(
+    raced,
+    devFallback,
+    target,
+    'Failed to send OTP',
+    usePhone ? 'OTP_PROVIDER_ERROR' : 'EMAIL_PROVIDER_ERROR',
+  );
+
+  return {
+    sessionId,
+    channel: raced.result?.channel || (usePhone ? 'sms' : 'email'),
+    resendCooldownSeconds: appConfig.otp.resendCooldownSeconds,
+    maskedContact: usePhone ? `+91 ${phone.slice(0, 2)}••••${phone.slice(-2)}` : email!.replace(/^(.).+(@.+)$/, '$1•••$2'),
+    ...delivery,
+  };
+}
+
+/**
+ * Confirms the deletion OTP, then closes the account: personal details are removed,
+ * saved addresses, cart, and push tokens are deleted, and the phone/email can be used to sign up again.
+ */
+export async function confirmDeleteAccount(customerId: string, sessionId: string, otp: string, accessToken?: string): Promise<void> {
+  const session = await authRepo.findOtpSessionById(sessionId);
+  if (!session) throw AppError.badRequest('Invalid session');
+  if (session.purpose !== 'delete_account') throw AppError.badRequest('Invalid OTP session for account deletion');
+  if (String(session.userId || '') !== String(customerId)) {
+    throw AppError.forbidden('OTP session does not belong to this account');
+  }
+  if (session.verified) throw AppError.badRequest('OTP already used');
+  if (session.otpExpiresAt && session.otpExpiresAt < new Date()) throw AppError.badRequest('OTP expired');
+
+  await checkOtpAttempt(session, otp);
+  await assertAccountCanBeDeleted(customerId);
+
+  const mongoose = (await import('mongoose')).default;
+  const userObjectId = new mongoose.Types.ObjectId(customerId);
+
+  session.verified = true;
+  session.verifiedAt = new Date();
+  await session.save();
+
+  const { CustomerUser } = await import('./auth.model');
+  await CustomerUser.updateOne(
+    { _id: userObjectId },
+    {
+      $set: {
+        name: 'Deleted user',
+        status: 'inactive',
+        phoneVerified: false,
+        phoneVerifiedAt: null,
+        avatarUrl: '',
+        passwordHash: null,
+        onboardingCompleted: false,
+      },
+      $unset: { phoneNumber: 1, email: 1, savedCheckoutContact: 1 },
+    },
+  );
+
+  const { CustomerAddress } = await import('../addresses/addresses.model');
+  await CustomerAddress.deleteMany({ userId: userObjectId });
+
+  const cartService = await import('../cart/cart.service');
+  await cartService.clearCart(customerId).catch(() => undefined);
+
+  const { PushToken, Notification } = await import('../notifications/notifications.model');
+  await PushToken.deleteMany({ userId: userObjectId });
+  await Notification.deleteMany({ userId: userObjectId });
+
+  const { CustomerWallet } = await import('../wallet/wallet.model');
+  await CustomerWallet.updateOne({ customerId: userObjectId }, { $set: { isActive: false } });
+
+  revokeToken(accessToken || '');
 }

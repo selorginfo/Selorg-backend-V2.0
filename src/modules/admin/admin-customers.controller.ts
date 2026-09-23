@@ -53,18 +53,51 @@ export async function createCustomer(req: Request, res: Response, next: NextFunc
 export async function listCustomers(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const customers = await CustomerUser.find({}).sort({ createdAt: -1 }).limit(200).lean();
-    const shaped = customers.map((c) => ({
-      id: String(c._id),
-      name: c.name,
-      phone: c.phoneNumber ?? '',
-      email: c.email ?? '',
-      status: c.status === 'active' ? { label: 'Active', tone: 'green' } : { label: 'Blocked', tone: 'red' },
-      orders: 0,
-      totalSpend: '₹0',
-      walletBalance: 0,
-      lastOrder: '—',
-      tickets: 0,
-    }));
+    const ids = customers.map((c) => c._id);
+    const { Order } = await import('../orders/order.model');
+    const [orderAgg, wallets] = await Promise.all([
+      Order.aggregate([
+        { $match: { userId: { $in: ids } } },
+        {
+          $group: {
+            _id: '$userId',
+            orders: { $sum: 1 },
+            totalSpend: { $sum: { $ifNull: ['$totalBill', 0] } },
+            lastOrder: { $max: '$createdAt' },
+          },
+        },
+      ]),
+      Promise.all(
+        customers.map(async (c) => {
+          try {
+            const w = await getBalance(String(c._id));
+            return { id: String(c._id), balance: Number(w.balance ?? 0) };
+          } catch {
+            return { id: String(c._id), balance: 0 };
+          }
+        }),
+      ),
+    ]);
+    const orderMap = new Map(orderAgg.map((o) => [String(o._id), o]));
+    const walletMap = new Map(wallets.map((w) => [w.id, w.balance]));
+
+    const shaped = customers.map((c) => {
+      const id = String(c._id);
+      const agg = orderMap.get(id);
+      const spend = Number(agg?.totalSpend ?? 0);
+      return {
+        id,
+        name: c.name,
+        phone: c.phoneNumber ?? '',
+        email: c.email ?? '',
+        status: c.status === 'active' ? { label: 'Active', tone: 'green' } : { label: 'Blocked', tone: 'red' },
+        orders: String(Number(agg?.orders ?? 0)),
+        totalSpend: `₹${spend.toLocaleString('en-IN')}`,
+        walletBalance: walletMap.get(id) ?? 0,
+        lastOrder: agg?.lastOrder ? new Date(agg.lastOrder).toLocaleString('en-IN') : '—',
+        tickets: '0',
+      };
+    });
     res.status(200).json({ success: true, data: shaped, total: shaped.length });
   } catch (error) {
     next(error);
