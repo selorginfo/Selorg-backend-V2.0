@@ -4,7 +4,7 @@ import {
   PickerUser, PickerDocument, PickerWorkLocation, PickerShift, PickerShiftAssignment,
   PickerAttendance, PickerWallet, PickerTransaction, PickerWithdrawalRequest,
   PickerBankAccount, PickerDevice, PickerNotification, PickerTrainingVideo,
-  PickerIssue, pickerDisplayRole,
+  PickerIssue, pickerDisplayRole, effectiveWorkforceRole,
 } from './picker.models';
 import { PickerOnboardingApplication } from './picker.rider.models';
 import { HHDOrder } from '../hhd/hhd.models';
@@ -185,6 +185,9 @@ function hourlyRate(shift?: { basePay?: number } | null, minutes?: number): numb
 export async function getAppProfile(pickerId: string) {
   const user = await PickerUser.findById(pickerId).lean() as any;
   if (!user) throw AppError.notFound('User');
+  if (effectiveWorkforceRole(user) !== 'picker') {
+    throw AppError.forbidden('Rider accounts cannot access picker profile.', 'ROLE_MISMATCH');
+  }
   const assignment = await resolveTodaysAssignment(pickerId).catch(() => null);
   const warehouseKey =
     (assignment as any)?.warehouseKey ||
@@ -200,7 +203,7 @@ export async function getAppProfile(pickerId: string) {
     memberSince: user.createdAt ? memberSinceDisplay(new Date(user.createdAt)) : null,
     hub: hub?.name || null,
     role: pickerDisplayRole(user),
-    workforceRole: user.workforceRole === 'picker' || user.workforceRole === 'rider' ? user.workforceRole : null,
+    workforceRole: effectiveWorkforceRole(user),
     photoUri: user.photoUri || null,
     dob: dobString(user.dob),
     gender: genderDisplay(user.gender),

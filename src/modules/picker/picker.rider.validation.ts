@@ -45,8 +45,31 @@ function withOrderedRange<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
   );
 }
 
-// ─── Auth (APIs 1–7) ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Auth (APIs 1â€“7) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
+export const checkAccountSchema = z.object({
+  loginType: z.enum(['phone', 'email']),
+  value: z.string().trim().min(1, 'value is required'),
+});
+
+export const checkRegistrationSchema = z.object({
+  phone: z.string().trim().min(1, 'phone is required'),
+  email: z.string().trim().toLowerCase().email('Please enter a valid email address'),
+});
+
+export const sendRegistrationOtpSchema = z.object({
+  phone: z.string().trim().min(1, 'phone is required'),
+  email: z.string().trim().toLowerCase().email('Please enter a valid email address'),
+  preferredChannel: z.enum(['sms', 'whatsapp']).optional(),
+});
+
+export const verifyRegistrationOtpSchema = z.object({
+  phone: z.string().trim().min(1, 'phone is required'),
+  email: z.string().trim().toLowerCase().email('Please enter a valid email address'),
+  otp: otpCode,
+  preferredChannel: z.enum(['sms', 'whatsapp']).optional(),
+});
 export const sendOtpSchema = z.object({
   phone: z.string().trim().min(1, 'phone is required'),
   preferredChannel: z.enum(['sms', 'whatsapp']).optional(),
@@ -63,6 +86,7 @@ export const verifyOtpSchema = z.object({
   otp: otpCode,
   preferredChannel: z.enum(['sms', 'whatsapp']).optional(),
   intent: z.enum(['login', 'signup']).optional(),
+  purpose: z.enum(['LOGIN', 'REGISTRATION']).optional(),
   storeId: z.string().trim().optional(),
 });
 
@@ -70,9 +94,10 @@ export const verifyOtpEmailSchema = z.object({
   email: z.string().trim().toLowerCase().email('Please enter a valid email address'),
   otp: otpCode,
   intent: z.enum(['login', 'signup']).optional(),
+  purpose: z.enum(['LOGIN', 'REGISTRATION']).optional(),
 });
 
-// ─── Profile + onboarding (APIs 9–17) ─────────────────────────────────────────
+// â”€â”€â”€ Profile + onboarding (APIs 9â€“17) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Indian registration plate, e.g. `KA01AB1234` / `KA 01 AB 1234`. Separators are
@@ -109,7 +134,8 @@ export const listWorkLocationsQuerySchema = z
     type: z.enum(['warehouse', 'darkstore']).optional(),
     lat: latitude.optional(),
     lng: longitude.optional(),
-    radiusKm: z.coerce.number().min(1).max(100).default(25),
+    /** Optional proximity filter. Omit for onboarding so all active hubs are listed. */
+    radiusKm: z.coerce.number().min(1).max(500).optional(),
   })
   .refine((value) => (value.lat == null) === (value.lng == null), {
     message: 'lat and lng must be supplied together',
@@ -190,7 +216,7 @@ export const submitOnboardingSchema = z.object({
   acceptedPrivacyVersion: z.string().trim().max(50).optional(),
 });
 
-// ─── Shifts (APIs 18–23) ──────────────────────────────────────────────────────
+// â”€â”€â”€ Shifts (APIs 18â€“23) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const listShiftsQuerySchema = withOrderedRange(
   z.object({
@@ -228,7 +254,7 @@ export const endShiftSchema = z.object({
   lng: longitude.optional(),
 });
 
-/** Shiftless HomeScreen online toggle — location optional (geofence skipped when omitted). */
+/** Shiftless HomeScreen online toggle â€” location optional (geofence skipped when omitted). */
 export const goOnlineSchema = z.object({
   location: locationPoint,
   latitude: latitude.optional(),
@@ -245,13 +271,13 @@ export const goOfflineSchema = z.object({
   lng: longitude.optional(),
 });
 
-// ─── Dashboard + incentives (APIs 24, 25) ─────────────────────────────────────
+// â”€â”€â”€ Dashboard + incentives (APIs 24, 25) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const dayQuerySchema = z.object({
   date: isoDate.optional(),
 });
 
-// ─── Standard orders (APIs 26–31, 45) ─────────────────────────────────────────
+// â”€â”€â”€ Standard orders (APIs 26â€“31, 45) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const listAvailableOrdersQuerySchema = z.object({
   scope: z.enum(['available', 'mine', 'all']).default('all'),
@@ -324,7 +350,7 @@ export const deliveryHistoryQuerySchema = withOrderedRange(
   }),
 );
 
-// ─── Bulk delivery (APIs 32–40) ───────────────────────────────────────────────
+// â”€â”€â”€ Bulk delivery (APIs 32â€“40) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const bulkBatchQuerySchema = z.object({
   batchId: z.string().trim().max(50).optional(),
@@ -388,7 +414,7 @@ export const batchIdParamSchema = z.object({
   batchId: z.string().trim().min(1).max(50),
 });
 
-// ─── Earnings + wallet (APIs 41–44) ───────────────────────────────────────────
+// â”€â”€â”€ Earnings + wallet (APIs 41â€“44) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const earningsSummaryQuerySchema = z
   .object({
@@ -419,7 +445,7 @@ export const walletTransactionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 
-// ─── Floating cash (APIs 46–48) ───────────────────────────────────────────────
+// â”€â”€â”€ Floating cash (APIs 46â€“48) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const cashTransactionsQuerySchema = withOrderedRange(
   z.object({
@@ -437,7 +463,7 @@ export const recordDepositSchema = z.object({
   note: z.string().trim().max(200).optional(),
 });
 
-// ─── Settings, config, support (APIs 49–58) ───────────────────────────────────
+// â”€â”€â”€ Settings, config, support (APIs 49â€“58) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const updatePreferencesSchema = z
   .object({
@@ -604,7 +630,7 @@ export const sendChatMessageSchema = z.object({
   clientMessageId: z.string().trim().max(100).optional(),
 });
 
-// ─── Legal (APIs 59, 60) ──────────────────────────────────────────────────────
+// â”€â”€â”€ Legal (APIs 59, 60) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const legalQuerySchema = z.object({
   version: z.string().trim().max(50).optional(),

@@ -35,19 +35,27 @@ function sendAuthResult(res: Response, result: authService.PickerAuthResult): vo
   res.json(ResponseFormatter.success(data));
 }
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function sendOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { phone, preferredChannel } = req.body;
-    sendAuthResult(res, await authService.sendOtp(phone, { preferredChannel }));
+    sendAuthResult(res, await authService.sendOtp(phone, {
+      preferredChannel,
+      purpose: req.body.purpose || 'LOGIN',
+      workforceRole: clientWorkforceRole(req),
+    }));
   } catch (err) { next(err); }
 }
 
 export async function resendOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { phone, preferredChannel } = req.body;
-    sendAuthResult(res, await authService.resendOtp(phone, { preferredChannel }));
+    sendAuthResult(res, await authService.resendOtp(phone, {
+      preferredChannel,
+      purpose: req.body.purpose || 'LOGIN',
+      workforceRole: clientWorkforceRole(req),
+    }));
   } catch (err) { next(err); }
 }
 
@@ -58,6 +66,7 @@ export async function verifyOtp(req: Request, res: Response, next: NextFunction)
       preferredChannel,
       storeId,
       intent,
+      purpose: req.body.purpose || 'LOGIN',
       workforceRole: clientWorkforceRole(req),
     }));
   } catch (err) { next(err); }
@@ -65,13 +74,19 @@ export async function verifyOtp(req: Request, res: Response, next: NextFunction)
 
 export async function sendOtpEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    sendAuthResult(res, await authService.sendOtpEmail(req.body.email));
+    sendAuthResult(res, await authService.sendOtpEmail(req.body.email, {
+      purpose: req.body.purpose || 'LOGIN',
+      workforceRole: clientWorkforceRole(req),
+    }));
   } catch (err) { next(err); }
 }
 
 export async function resendOtpEmail(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    sendAuthResult(res, await authService.resendOtpEmail(req.body.email));
+    sendAuthResult(res, await authService.resendOtpEmail(req.body.email, {
+      purpose: req.body.purpose || 'LOGIN',
+      workforceRole: clientWorkforceRole(req),
+    }));
   } catch (err) { next(err); }
 }
 
@@ -80,6 +95,7 @@ export async function verifyOtpEmail(req: Request, res: Response, next: NextFunc
     const { email, otp, intent } = req.body;
     sendAuthResult(res, await authService.verifyOtpEmail(email, otp, {
       intent,
+      purpose: req.body.purpose || 'LOGIN',
       workforceRole: clientWorkforceRole(req),
     }));
   } catch (err) { next(err); }
@@ -94,11 +110,62 @@ export async function logout(req: Request, res: Response, next: NextFunction): P
 
 export async function refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    sendAuthResult(res, await authService.refreshSession(requirePickerId(req)));
+    sendAuthResult(res, await authService.refreshSession(requirePickerId(req), {
+      workforceRole: clientWorkforceRole(req),
+    }));
   } catch (err) { next(err); }
 }
 
-// ─── Profile ──────────────────────────────────────────────────────────────────
+export async function checkAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { loginType, value } = req.body;
+    sendAuthResult(res, await authService.checkAccount(loginType, value, {
+      workforceRole: clientWorkforceRole(req),
+    }));
+  } catch (err) { next(err); }
+}
+
+export async function checkRegistration(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { phone, email } = req.body;
+    sendAuthResult(res, await authService.checkRegistration(phone, email, {
+      workforceRole: clientWorkforceRole(req),
+    }));
+  } catch (err) { next(err); }
+}
+
+export async function sendRegistrationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { phone, email, preferredChannel } = req.body;
+    sendAuthResult(res, await authService.sendRegistrationOtp(phone, email, {
+      preferredChannel,
+      workforceRole: clientWorkforceRole(req),
+    }));
+  } catch (err) { next(err); }
+}
+
+export async function resendRegistrationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { phone, email, preferredChannel } = req.body;
+    sendAuthResult(res, await authService.resendRegistrationOtp(phone, email, {
+      preferredChannel,
+      workforceRole: clientWorkforceRole(req),
+    }));
+  } catch (err) { next(err); }
+}
+
+export async function verifyRegistrationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { phone, email, otp, preferredChannel } = req.body;
+    sendAuthResult(res, await authService.verifyRegistrationOtp(phone, email, otp, {
+      preferredChannel,
+      workforceRole: clientWorkforceRole(req),
+    }));
+  } catch (err) { next(err); }
+}
+
+
+// â”€â”€â”€ Profile â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -128,7 +195,7 @@ export async function updateRiderProfile(req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 }
 
-// ─── Shifts ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Shifts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listAvailableShifts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -227,7 +294,7 @@ export async function endBreak(req: Request, res: Response, next: NextFunction):
   } catch (err) { next(err); }
 }
 
-// ─── Attendance ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function punchIn(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -256,7 +323,7 @@ export async function getAttendance(req: Request, res: Response, next: NextFunct
   } catch (err) { next(err); }
 }
 
-// ─── Wallet ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Wallet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getWallet(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -281,7 +348,7 @@ export async function requestWithdrawal(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Documents ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Documents â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -315,7 +382,7 @@ export async function uploadFile(req: Request, res: Response, next: NextFunction
   } catch (err) { next(err); }
 }
 
-// ─── Notifications ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getNotifications(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -334,7 +401,7 @@ export async function markNotificationRead(req: Request, res: Response, next: Ne
   } catch (err) { next(err); }
 }
 
-// ─── Bank Accounts ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Bank Accounts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listBankAccounts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -349,7 +416,7 @@ export async function addBankAccount(req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 }
 
-// ─── Training ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Training â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listTrainingVideos(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -368,7 +435,7 @@ export async function updateTrainingProgress(req: Request, res: Response, next: 
   } catch (err) { next(err); }
 }
 
-// ─── Work Locations ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Work Locations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listWorkLocations(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -383,7 +450,7 @@ export async function listWorkLocations(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Performance ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Performance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getPerformance(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -393,7 +460,7 @@ export async function getPerformance(req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 }
 
-// ─── Admin: Picker Management ─────────────────────────────────────────────────
+// â”€â”€â”€ Admin: Picker Management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function adminListPickers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -502,7 +569,7 @@ export async function adminReviewDocument(req: Request, res: Response, next: Nex
   } catch (err) { next(err); }
 }
 
-// ─── Config / Legal / FAQ ─────────────────────────────────────────────────────
+// â”€â”€â”€ Config / Legal / FAQ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getPublicConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -536,7 +603,7 @@ export async function listFAQ(req: Request, res: Response, next: NextFunction): 
   } catch (err) { next(err); }
 }
 
-// ─── User Profile extras ──────────────────────────────────────────────────────
+// â”€â”€â”€ User Profile extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getLinkStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { const userId = requirePickerId(req); res.json(ResponseFormatter.success({ linked: false, userId })); } catch (err) { next(err); }
@@ -576,7 +643,7 @@ export async function setUpi(req: Request, res: Response, next: NextFunction): P
   } catch (err) { next(err); }
 }
 
-// ─── Onboarding ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Onboarding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getOnboardingState(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -621,7 +688,7 @@ export async function acknowledgeKit(req: Request, res: Response, next: NextFunc
   } catch (err) { next(err); }
 }
 
-// ─── Shift extras ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Shift extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getShiftReadiness(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -637,7 +704,7 @@ export async function getShiftReadiness(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Attendance extras ────────────────────────────────────────────────────────
+// â”€â”€â”€ Attendance extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAttendanceSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -651,7 +718,7 @@ export async function getAttendanceStats(req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 }
 
-// ─── Wallet extras ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Wallet extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getWalletBalance(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -694,7 +761,7 @@ export async function getWithdrawalRequest(req: Request, res: Response, next: Ne
   } catch (err) { next(err); }
 }
 
-// ─── Notifications extras ─────────────────────────────────────────────────────
+// â”€â”€â”€ Notifications extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function markAllNotificationsRead(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -704,7 +771,7 @@ export async function markAllNotificationsRead(req: Request, res: Response, next
   } catch (err) { next(err); }
 }
 
-// ─── Bank Account extras ──────────────────────────────────────────────────────
+// â”€â”€â”€ Bank Account extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function verifyBankAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -730,7 +797,7 @@ export async function deleteBankAccount(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Training extras ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Training extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getTrainingVideoById(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -794,7 +861,7 @@ export async function submitTrainingAssessment(req: Request, res: Response, next
   try { const userId = requirePickerId(req); res.json(ResponseFormatter.success({ userId, passed: false, score: 0 })); } catch (err) { next(err); }
 }
 
-// ─── Locations ────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Locations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getCurrentLocation(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -891,7 +958,7 @@ export async function saveDarkstoreGps(req: Request, res: Response, next: NextFu
   try { res.json(ResponseFormatter.success({ saved: true })); } catch (err) { next(err); }
 }
 
-// ─── Performance extras ───────────────────────────────────────────────────────
+// â”€â”€â”€ Performance extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getPerformanceSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -903,7 +970,7 @@ export async function getPerformanceHistory(req: Request, res: Response, next: N
   try { const userId = requirePickerId(req); res.json(ResponseFormatter.success({ userId, history: [] })); } catch (err) { next(err); }
 }
 
-// ─── Dark Store Login ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Dark Store Login â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function registerAtDarkStore(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -915,7 +982,7 @@ export async function getStoreOtp(req: Request, res: Response, next: NextFunctio
   try { const userId = requirePickerId(req); res.json(ResponseFormatter.success({ userId, otp: null })); } catch (err) { next(err); }
 }
 
-// ─── Devices ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Devices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getAssignedDevice(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -939,7 +1006,7 @@ export async function uploadDeviceConditionPhoto(req: Request, res: Response, ne
   try { res.json(ResponseFormatter.success({ uploaded: true, url: null })); } catch (err) { next(err); }
 }
 
-// ─── Manager OTP ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Manager OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function requestManagerOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -953,7 +1020,7 @@ export async function verifyManagerOtp(req: Request, res: Response, next: NextFu
   } catch (err) { next(err); }
 }
 
-// ─── Approval ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Approval â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function verifyLocationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -961,7 +1028,7 @@ export async function verifyLocationOtp(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Heartbeat / Presence ─────────────────────────────────────────────────────
+// â”€â”€â”€ Heartbeat / Presence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function postHeartbeat(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -981,7 +1048,7 @@ export async function registerPushToken(req: Request, res: Response, next: NextF
   } catch (err) { next(err); }
 }
 
-// ─── Account ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function requestAccountDeletion(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -989,7 +1056,7 @@ export async function requestAccountDeletion(req: Request, res: Response, next: 
   } catch (err) { next(err); }
 }
 
-// ─── Samples ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Samples â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listSamples(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.json(ResponseFormatter.success({ samples: [] })); } catch (err) { next(err); }
@@ -1003,7 +1070,7 @@ export async function createSample(req: Request, res: Response, next: NextFuncti
   try { res.status(201).json(ResponseFormatter.success(req.body)); } catch (err) { next(err); }
 }
 
-// ─── Shared Orders ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Shared Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getSharedOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -1076,7 +1143,7 @@ export async function uploadOrderProofPhoto(req: Request, res: Response, next: N
   } catch (err) { next(err); }
 }
 
-// ─── Issues ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Issues â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function reportIssue(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -1085,7 +1152,7 @@ export async function reportIssue(req: Request, res: Response, next: NextFunctio
   } catch (err) { next(err); }
 }
 
-// ─── Verify ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Verify â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function verifyFace(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -1096,7 +1163,7 @@ export async function verifyFace(req: Request, res: Response, next: NextFunction
   } catch (err) { next(err); }
 }
 
-// ─── Didit ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Didit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function createDiditSession(req: Request, res: Response, next: NextFunction): Promise<void> {
   try { res.status(201).json(ResponseFormatter.success({ sessionId: null })); } catch (err) { next(err); }
@@ -1110,7 +1177,7 @@ export async function handleDiditWebhook(req: Request, res: Response, next: Next
   try { res.json(ResponseFormatter.success({ received: true })); } catch (err) { next(err); }
 }
 
-// ─── Support ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Support â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function listSupportTickets(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -1308,7 +1375,7 @@ export async function getBulkBatchDetail(req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 }
 
-// ─── Admin: Extended Picker Ops ───────────────────────────────────────────────
+// â”€â”€â”€ Admin: Extended Picker Ops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function adminGetPickerById(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {

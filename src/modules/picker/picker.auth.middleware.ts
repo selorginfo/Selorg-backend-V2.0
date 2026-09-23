@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { PickerUser } from './picker.models';
+import { PickerUser, parseWorkforceRole, effectiveWorkforceRole, type WorkforceRole } from './picker.models';
 import { PICKER_JWT_SECRET, PICKER_TOKEN_AUDIENCE } from './picker.auth.service';
 import { ResponseFormatter } from '../../utils/response';
 
@@ -12,6 +12,8 @@ import { ResponseFormatter } from '../../utils/response';
  *    authenticate here, even if its subject happens to collide with a picker id;
  *  - the token's `sid` must still match `PickerUser.sessionToken`, which is what
  *    makes logout and refresh invalidate outstanding tokens.
+ *  - when the client declares `x-selorg-client: rider|picker`, the account's
+ *    workforceRole must match (legacy unset role counts as rider).
  */
 
 function sendAuthError(res: Response, status: number, appCode: string, message: string): void {
@@ -84,6 +86,19 @@ async function authenticatePickerInner(
       return;
     }
 
+    const workforceRole = effectiveWorkforceRole(user);
+    const clientRole = parseWorkforceRole(req.headers['x-selorg-client']);
+    if (clientRole && clientRole !== workforceRole) {
+      const other = clientRole === 'rider' ? 'Picker' : 'Rider';
+      sendAuthError(
+        res,
+        403,
+        'ROLE_MISMATCH',
+        `This account is registered as a ${other.toLowerCase()}. Please use the ${other} app.`,
+      );
+      return;
+    }
+
     req.pickerId = String(user._id);
     req.picker = {
       id: String(user._id),
@@ -92,7 +107,7 @@ async function authenticatePickerInner(
       currentLocationId: user.currentLocationId ?? null,
       activeShiftId: user.activeShiftId ? String(user.activeShiftId) : null,
       isOnline: Boolean(user.isOnline),
-      workforceRole: user.workforceRole === 'picker' || user.workforceRole === 'rider' ? user.workforceRole : null,
+      workforceRole,
     };
     next();
   } catch (error) {
@@ -134,4 +149,17 @@ export function requireActivePicker(req: Request, res: Response, next: NextFunct
     return;
   }
   sendAuthError(res, 403, 'ONBOARDING_INCOMPLETE', 'Complete your onboarding before taking deliveries.');
+}
+
+/** Restrict a route family to rider or picker accounts (and matching client header when present). */
+export function requireWorkforceRole(...allowed: WorkforceRole[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role = req.picker?.workforceRole || parseWorkforceRole(req.headers['x-selorg-client']);
+    if (role && !allowed.includes(role)) {
+      const want = allowed.map((r) => (r === 'picker' ? 'Picker' : 'Rider')).join(' or ');
+      sendAuthError(res, 403, 'ROLE_MISMATCH', `This endpoint is only available for ${want} accounts.`);
+      return;
+    }
+    next();
+  };
 }
