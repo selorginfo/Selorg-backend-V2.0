@@ -1,19 +1,24 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { PickerUser, parseWorkforceRole, effectiveWorkforceRole, type WorkforceRole } from './picker.models';
-import { PICKER_JWT_SECRET, PICKER_TOKEN_AUDIENCE } from './picker.auth.service';
+import {
+  PICKER_JWT_SECRET,
+  isAllowedWorkforceTokenAudience,
+} from './picker.auth.service';
 import { ResponseFormatter } from '../../utils/response';
 
 /**
- * Verifies a rider (picker) JWT and populates `req.pickerId` / `req.picker`.
+ * Verifies a workforce (picker/rider) JWT and populates `req.pickerId` / `req.picker`.
  *
- * Two guarantees the rider contract depends on:
+ * Guarantees:
  *  - a token minted for another audience (admin, customer, HHD) can never
  *    authenticate here, even if its subject happens to collide with a picker id;
+ *  - role-specific audiences (`selorg-picker` / `selorg-rider`) cannot cross apps;
  *  - the token's `sid` must still match `PickerUser.sessionToken`, which is what
- *    makes logout and refresh invalidate outstanding tokens.
+ *    makes logout and refresh invalidate outstanding tokens;
  *  - when the client declares `x-selorg-client: rider|picker`, the account's
- *    workforceRole must match (legacy unset role counts as rider).
+ *    workforceRole must match (legacy unset role counts as rider);
+ *  - token `workforceRole` claim must match the account when present.
  */
 
 function sendAuthError(res: Response, status: number, appCode: string, message: string): void {
@@ -52,10 +57,6 @@ async function authenticatePickerInner(
     }
 
     const audiences = decoded.aud ? ([] as string[]).concat(decoded.aud as string | string[]) : [];
-    if (audiences.length > 0 && !audiences.includes(PICKER_TOKEN_AUDIENCE)) {
-      sendAuthError(res, 401, 'AUTH_TOKEN_INVALID', 'This token is not valid for this app.');
-      return;
-    }
 
     const userId = decoded.userId || decoded.sub || decoded.id;
     if (!userId || !/^[a-f\d]{24}$/i.test(String(userId))) {
@@ -68,6 +69,18 @@ async function authenticatePickerInner(
       .lean()) as any;
     if (!user) {
       sendAuthError(res, 401, 'AUTH_USER_NOT_FOUND', 'User not found.');
+      return;
+    }
+
+    const workforceRole = effectiveWorkforceRole(user);
+    if (!isAllowedWorkforceTokenAudience(audiences, workforceRole)) {
+      sendAuthError(res, 401, 'AUTH_TOKEN_INVALID', 'This token is not valid for this app.');
+      return;
+    }
+
+    const tokenRole = parseWorkforceRole((decoded as { workforceRole?: unknown }).workforceRole);
+    if (tokenRole && tokenRole !== workforceRole) {
+      sendAuthError(res, 401, 'AUTH_TOKEN_INVALID', 'This token is not valid for this account.');
       return;
     }
 
@@ -86,7 +99,6 @@ async function authenticatePickerInner(
       return;
     }
 
-    const workforceRole = effectiveWorkforceRole(user);
     const clientRole = parseWorkforceRole(req.headers['x-selorg-client']);
     if (clientRole && clientRole !== workforceRole) {
       const other = clientRole === 'rider' ? 'Picker' : 'Rider';

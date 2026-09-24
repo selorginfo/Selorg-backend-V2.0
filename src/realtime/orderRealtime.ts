@@ -5,10 +5,20 @@ import { logger } from '../utils/logger';
 import { eventBus } from '../events/eventBus';
 import { EVENT_TYPES } from '../events/eventTypes';
 import { getCustomerJwtSecret } from '../utils/auth';
-import { PICKER_JWT_SECRET, PICKER_TOKEN_AUDIENCE } from '../modules/picker/picker.auth.service';
+import {
+  PICKER_JWT_SECRET,
+  PICKER_TOKEN_AUDIENCE,
+  PICKER_APP_TOKEN_AUDIENCE,
+  RIDER_APP_TOKEN_AUDIENCE,
+} from '../modules/picker/picker.auth.service';
 import { DEFAULT_HUB_KEY } from '../modules/orders/fulfillment.service';
 import { isAllowedOrigin } from '../config/cors';
 
+const WORKFORCE_SOCKET_AUDIENCES = new Set([
+  PICKER_TOKEN_AUDIENCE,
+  PICKER_APP_TOKEN_AUDIENCE,
+  RIDER_APP_TOKEN_AUDIENCE,
+]);
 type ActorRole = 'hhd' | 'rider' | 'customer';
 
 interface AuthedSocketData {
@@ -81,8 +91,8 @@ async function authPicker(socket: Socket): Promise<AuthedSocketData> {
   if (!token) throw new Error('AUTH_REQUIRED');
   // Match HTTP picker auth: verify signature only (audience may be absent on older tokens).
   const decoded = jwt.verify(token, PICKER_JWT_SECRET) as { sub?: string; id?: string; aud?: string | string[] };
-  const aud = decoded.aud;
-  if (aud && aud !== PICKER_TOKEN_AUDIENCE && !(Array.isArray(aud) && aud.includes(PICKER_TOKEN_AUDIENCE))) {
+  const audiences = decoded.aud ? ([] as string[]).concat(decoded.aud) : [];
+  if (audiences.length > 0 && !audiences.some((a) => WORKFORCE_SOCKET_AUDIENCES.has(a))) {
     throw new Error('AUTH_REQUIRED');
   }
   const userId = String(decoded.sub || decoded.id || '');
