@@ -44,3 +44,9 @@ export const verifyLinkPhoneOtpSchema = z.object({
   otp: z.string().trim().min(1, 'otp required'),
 });
 export type VerifyLinkPhoneOtpInput = z.infer<typeof verifyLinkPhoneOtpSchema>;
+
+export const confirmDeleteAccountSchema = z.object({
+  sessionId: z.string().trim().min(1, 'sessionId required'),
+  otp: z.string().trim().min(1, 'otp required'),
+});
+export type ConfirmDeleteAccountInput = z.infer<typeof confirmDeleteAccountSchema>;

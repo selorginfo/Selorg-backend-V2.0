@@ -11,10 +11,6 @@ function toUserObjectId(userId?: string): mongoose.Types.ObjectId {
   throw new AppError('Invalid user id', 401);
 }
 
-function escapeLabelRegex(label: string): string {
-  return label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 interface AddressFields {
   label?: string;
   line1?: string;
@@ -48,25 +44,6 @@ function mergeWithEnrichment(body: AddressFields, enriched: AddressFields | null
   if (userLine1) merged.line1 = userLine1;
   if (userArea) merged.line2 = userArea;
   return merged;
-}
-
-async function applyExistingAddressUpdate(existing: ICustomerAddress, fields: AddressFields, userObjectId: mongoose.Types.ObjectId) {
-  const { label, line1, line2, landmark, city, state, pincode, latitude, longitude, isDefault } = fields;
-  if (label !== undefined) existing.label = String(label).trim() || existing.label;
-  if (line1 !== undefined) existing.line1 = line1;
-  if (line2 !== undefined) existing.line2 = line2;
-  if (landmark !== undefined) existing.landmark = landmark;
-  if (city !== undefined) existing.city = city;
-  if (state !== undefined) existing.state = state;
-  if (pincode !== undefined) existing.pincode = pincode;
-  if (latitude !== undefined) existing.latitude = latitude;
-  if (longitude !== undefined) existing.longitude = longitude;
-  if (isDefault !== undefined) {
-    existing.isDefault = Boolean(isDefault);
-    if (existing.isDefault) await addressesRepo.unsetOtherDefaults(userObjectId, existing._id);
-  }
-  await existing.save();
-  return existing.toObject();
 }
 
 /**
@@ -127,13 +104,6 @@ export async function createAddress(userId: string | undefined, body: CreateAddr
   if (!city || !String(city).trim()) throw AppError.badRequest('City is required');
 
   const normalizedLabel = (label || 'Home').trim();
-  const labelRegex = new RegExp(`^${escapeLabelRegex(normalizedLabel)}$`, 'i');
-
-  const existing = await addressesRepo.findByLabel(uid, labelRegex);
-  if (existing) {
-    const address = await applyExistingAddressUpdate(existing, merged, uid);
-    return { address: toAddressDto(address), wasUpdated: true };
-  }
 
   const count = await addressesRepo.countByUser(uid);
   const createPayload = {
@@ -151,19 +121,7 @@ export async function createAddress(userId: string | undefined, body: CreateAddr
     order: count,
   };
 
-  let doc: ICustomerAddress;
-  try {
-    doc = await addressesRepo.create(createPayload);
-  } catch (err) {
-    if ((err as { code?: number })?.code === 11000) {
-      const duplicate = await addressesRepo.findByLabel(uid, labelRegex);
-      if (duplicate) {
-        const address = await applyExistingAddressUpdate(duplicate, merged, uid);
-        return { address: toAddressDto(address), wasUpdated: true };
-      }
-    }
-    throw err;
-  }
+  const doc = await addressesRepo.create(createPayload);
 
   if (isDefault) await addressesRepo.unsetOtherDefaults(uid, doc._id);
 

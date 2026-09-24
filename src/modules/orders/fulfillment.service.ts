@@ -4,6 +4,7 @@ import { AppError } from '../../utils/AppError';
 import { eventBus } from '../../events/eventBus';
 import { EVENT_TYPES } from '../../events/eventTypes';
 import { sendWebPush } from '../../services/webpush.service';
+import { sendToTokens } from '../../services/fcm.service';
 import { Order, IOrder, OrderRiderStage } from './order.model';
 import { Product } from '../products/products.model';
 import { StoreInventory } from '../products/store-inventory.model';
@@ -11,6 +12,7 @@ import { HHDOrder, HHDItem, HHDAssignOrder, HHDUser } from '../hhd/hhd.models';
 import { ORDER_STATUS, ORDER_PRIORITY, ZONE, ITEM_STATUS } from '../hhd/hhd.constants';
 import { PickerUser, PickerNotification } from '../picker/picker.models';
 import { PickerLocationPing } from '../picker/picker.rider.models';
+import { DarkStore } from '../store/dark-store.model';
 import { Notification, PushToken } from '../notifications/notifications.model';
 import { CATEGORIES } from '../notifications/notifications.constants';
 
@@ -559,6 +561,7 @@ export async function notifyCustomerOrderLifecycle(
     const tokens = await PushToken.find({ userId, active: true }).lean();
     let delivered = 0;
     const attempted: string[] = [];
+    const fcmTokens: string[] = [];
     for (const token of tokens) {
       if (token.platform === 'web' && token.webSubscription?.endpoint && token.webSubscription.keys?.p256dh && token.webSubscription.keys?.auth) {
         attempted.push('web-push');
@@ -571,12 +574,20 @@ export async function notifyCustomerOrderLifecycle(
         );
         if (result.sent) delivered += 1;
         else logger.warn('[fulfillment] web-push send failed', { error: result.error, orderId });
-      } else {
+      } else if (token.token) {
         attempted.push(token.tokenType || 'fcm');
-        logger.info('[fulfillment] push token stored but FCM dispatch is not configured', {
-          platform: token.platform,
-          orderId,
-        });
+        fcmTokens.push(token.token);
+      }
+    }
+    if (fcmTokens.length) {
+      const sent = await sendToTokens(fcmTokens, {
+        title: copy.title,
+        body: copy.body,
+        data: { orderId, orderNumber, status },
+      });
+      delivered += sent;
+      if (sent === 0) {
+        logger.warn('[fulfillment] FCM dispatch sent 0 messages', { orderId, tokens: fcmTokens.length });
       }
     }
     await Notification.updateOne(
@@ -599,7 +610,7 @@ export async function notifyPaymentOutcome(
   outcome: string,
   opts?: { reason?: string },
 ): Promise<void> {
-  const status = outcome === 'success' ? 'confirmed' : 'cancelled';
+  const status = outcome === 'success' ? 'confirmed' : 'payment_failed';
   await notifyCustomerOrderLifecycle(order, status, { note: opts?.reason || outcome });
 }
 
@@ -667,6 +678,14 @@ function customerNotificationCopy(
   if (status === 'cancelled') {
     return { title: 'Order cancelled', body: `Order ${num} was cancelled.`, type: 'ORDER_CANCELLED' };
   }
+  if (status === 'payment_failed') {
+    const why = note?.trim() ? ` ${note.trim()}` : '';
+    return {
+      title: 'Payment failed',
+      body: `Payment for order ${num} was not completed.${why} You can retry from checkout.`,
+      type: 'PAYMENT_FAILED',
+    };
+  }
   if (status === 'accepted') {
     return { title: 'Rider assigned', body: `A rider has been assigned to order ${num}.`, type: 'ORDER_ON_WAY' };
   }
@@ -725,7 +744,30 @@ export async function attachTrackingDetails(
     }
   }
 
+  const deliveryAddress = order.deliveryAddress as Record<string, unknown> | undefined;
+  const destination = mapPoint(deliveryAddress?.latitude, deliveryAddress?.longitude);
+  if (destination) formatted.destination = destination;
+
+  const storeId = order.storeId ? String(order.storeId) : '';
+  if (storeId && mongoose.isValidObjectId(storeId)) {
+    const store = await DarkStore.findById(storeId).select('name location').lean();
+    const coords = store?.location?.coordinates;
+    const storePoint = coords && coords.length >= 2 ? mapPoint(coords[1], coords[0]) : null;
+    if (storePoint) {
+      formatted.storeLocation = { ...storePoint, name: store?.name || 'Selorg store' };
+    }
+  }
+
   return formatted;
+}
+
+function mapPoint(lat: unknown, lng: unknown): { latitude: number; longitude: number } | null {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
 }
 
 export async function notifyRiderAccepted(order: IOrder): Promise<void> {

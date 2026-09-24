@@ -266,7 +266,31 @@ export async function getAdjustments(storeId: string, page = 1, limit = 50) {
 
 export async function createAdjustment(data: Record<string, unknown>, actor: string, storeId: string) {
   const sid = resolveStoreId(storeId);
-  return InventoryAdjustment.create({ adjustment_id: generateId('ADJ'), ...data, performed_by: actor, store_id: sid });
+  const physical = Number(data.physical_qty ?? data.new_stock ?? data.quantity ?? 0);
+  const system = Number(data.system_qty ?? data.previous_stock ?? 0);
+  const variance = Number.isFinite(Number(data.variance)) ? Number(data.variance) : physical - system;
+  const quantity = data.quantity != null ? Number(data.quantity) : Math.abs(variance);
+  const actionRaw = String(data.action || '').toLowerCase();
+  const allowed = new Set(['add', 'remove', 'damage', 'expiry', 'transfer', 'correction']);
+  const action = allowed.has(actionRaw)
+    ? actionRaw
+    : variance > 0
+      ? 'add'
+      : variance < 0
+        ? 'remove'
+        : 'correction';
+  return InventoryAdjustment.create({
+    adjustment_id: generateId('ADJ'),
+    sku: String(data.sku || 'UNKNOWN'),
+    product_name: data.product_name ? String(data.product_name) : undefined,
+    action,
+    quantity: Number.isFinite(quantity) ? quantity : 0,
+    reason: data.reason ? String(data.reason) : 'Stock audit adjustment',
+    performed_by: actor,
+    store_id: sid,
+    previous_stock: Number.isFinite(system) ? system : undefined,
+    new_stock: Number.isFinite(physical) ? physical : undefined,
+  });
 }
 
 export async function getCycleCount(storeId: string) {

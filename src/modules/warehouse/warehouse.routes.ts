@@ -38,6 +38,8 @@ import {
   startGRN,
   completeGRN,
   logGRNDiscrepancy,
+  getASNs,
+  createASN,
   getDocks,
   updateDock,
   // Inventory
@@ -223,6 +225,8 @@ router.get('/inbound/grns/:id', wh, getGRNDetails);
 router.post('/inbound/grns/:id/start', wh, startGRN);
 router.post('/inbound/grns/:id/complete', wh, completeGRN);
 router.post('/inbound/grns/:id/discrepancy', wh, logGRNDiscrepancy);
+router.get('/inbound/asns', wh, getASNs);
+router.post('/inbound/asns', wh, createASN);
 router.get('/inbound/docks', wh, getDocks);
 router.put('/inbound/docks/:id', wh, updateDock);
 

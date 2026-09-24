@@ -181,7 +181,20 @@ export async function getDashboard(
         queuePosition: null,
       },
       shift,
-      notifications: [],
+      notifications: (
+        await HHDOrder.find({ userId: new mongoose.Types.ObjectId(userId) })
+          .sort({ updatedAt: -1 })
+          .limit(20)
+          .select('orderId status rackLocation updatedAt')
+          .lean()
+      ).map(order => ({
+        id: String(order.orderId),
+        title: String(order.orderId),
+        body: `Status ${String(order.status).replace(/_/g, ' ')}${
+          order.rackLocation ? ` · ${order.rackLocation}` : ''
+        }`,
+        at: order.updatedAt ? new Date(order.updatedAt).toISOString() : new Date().toISOString(),
+      })),
     };
 
     res.status(200).json(ResponseFormatter.success(dashboardData));

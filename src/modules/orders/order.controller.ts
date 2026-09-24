@@ -255,3 +255,111 @@ export async function adminGetLogs(req: Request, res: Response, next: NextFuncti
     next(err);
   }
 }
+
+function actorFrom(req: Request): string {
+  const u = (req as { user?: { email?: string; name?: string; id?: string } }).user;
+  return u?.email || u?.name || u?.id || 'admin';
+}
+
+export async function adminAddNote(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { note, visibility } = req.body as { note?: string; visibility?: string };
+    const result = await ordersService.adminAddOrderNote(req.params.id, {
+      note: note || '',
+      visibility,
+      actor: actorFrom(req),
+    });
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function adminReassignPicker(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { pickerId, picker, pickerName, reason, note } = req.body as Record<string, string>;
+    const result = await ordersService.adminReassignPicker(req.params.id, {
+      pickerId: pickerId || picker || '',
+      pickerName: pickerName || picker,
+      reason,
+      note,
+      actor: actorFrom(req),
+    });
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function adminReassignRider(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { riderId, rider, riderName, reason, note } = req.body as Record<string, string>;
+    const result = await ordersService.adminReassignRider(req.params.id, {
+      riderId: riderId || rider || '',
+      riderName: riderName || rider,
+      reason,
+      note,
+      actor: actorFrom(req),
+    });
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function adminContactCustomer(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { channel, template, note } = req.body as Record<string, string>;
+    const result = await ordersService.adminContactCustomer(req.params.id, {
+      channel: channel || '',
+      template,
+      note,
+      actor: actorFrom(req),
+    });
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function adminInitiateRefund(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { amount, method, reason, scope, note } = req.body as Record<string, string | number>;
+    const result = await ordersService.adminInitiateRefund(req.params.id, {
+      amount: typeof amount === 'number' ? amount : Number(amount),
+      method: method != null ? String(method) : undefined,
+      reason: reason != null ? String(reason) : undefined,
+      scope: scope != null ? String(scope) : undefined,
+      note: note != null ? String(note) : undefined,
+      actor: actorFrom(req),
+    });
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
+  } catch (err) {
+    next(err);
+  }
+}

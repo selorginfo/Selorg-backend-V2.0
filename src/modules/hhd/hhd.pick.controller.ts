@@ -39,7 +39,7 @@ export async function reportIssue(
       return next(new AppError('User not authenticated', 401, 'AUTH_REQUIRED'));
     }
 
-    const { orderId, sku, binId, issueType, deviceId, notes } = req.body as {
+    const { orderId, sku, binId: requestedBin, issueType, deviceId, notes } = req.body as {
       orderId?: string;
       sku?: string;
       binId?: string;
@@ -48,9 +48,9 @@ export async function reportIssue(
       notes?: string;
     };
 
-    if (!orderId || !sku || !binId || !issueType) {
+    if (!orderId || !sku || !issueType) {
       return next(
-        new AppError('Please provide orderId, sku, binId, and issueType', 400, 'VALIDATION_ERROR'),
+        new AppError('Please provide orderId, sku, and issueType', 400, 'VALIDATION_ERROR'),
       );
     }
 
@@ -62,6 +62,11 @@ export async function reportIssue(
     if (!orderItem) {
       return next(new AppError('Order item not found', 404, 'NOT_FOUND'));
     }
+
+    const binId =
+      (requestedBin && requestedBin.trim()) ||
+      (orderItem.location && String(orderItem.location).trim()) ||
+      'UNASSIGNED';
 
     const pickIssue = await HHDPickIssue.create({
       orderId,

@@ -30,7 +30,7 @@ router.delete('/collections/:id', cmsAdminController.deleteCollection);
 
 // Media
 router.get('/media', cmsAdminController.listMedia);
-router.post('/media', cmsAdminController.createMedia);
+router.post('/media', cmsAdminController.mediaUploadMiddleware, cmsAdminController.createMedia);
 router.delete('/media/:id', cmsAdminController.deleteMedia);
 
 // Banners

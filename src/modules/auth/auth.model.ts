@@ -103,7 +103,7 @@ export interface IOtpSession extends Document {
   attemptCount: number;
   verified: boolean;
   verifiedAt: Date | null;
-  purpose: 'login' | 'link_phone';
+  purpose: 'login' | 'link_phone' | 'delete_account';
   /** Whether this session was started for an existing-user login or a new-user signup. */
   intent: 'login' | 'signup';
   userId: string | null;
@@ -127,7 +127,7 @@ const otpSessionSchema = new Schema<IOtpSession>(
     attemptCount: { type: Number, default: 0 },
     verified: { type: Boolean, default: false },
     verifiedAt: { type: Date, default: null },
-    purpose: { type: String, enum: ['login', 'link_phone'], default: 'login', index: true },
+    purpose: { type: String, enum: ['login', 'link_phone', 'delete_account'], default: 'login', index: true },
     intent: { type: String, enum: ['login', 'signup'], default: 'login' },
     userId: { type: String, default: null, index: true },
     metadata: { ip: String, userAgent: String, deviceId: String },

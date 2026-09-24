@@ -55,6 +55,7 @@ import {
   scanItem,
   getSubstitutes,
   markItemNotFound,
+  unscanItem,
   updateItem,
 } from './hhd.item.controller';
 
@@ -164,6 +165,7 @@ itemRouter.get('/order/:orderId', getOrderItems);
 itemRouter.get('/substitutes', validate(substitutesQuerySchema, 'query'), getSubstitutes);
 itemRouter.post('/scan', validate(scanItemBodySchema), scanItem);
 itemRouter.put('/:itemId/not-found', validate(markNotFoundBodySchema), markItemNotFound);
+itemRouter.put('/:itemId/unscan', unscanItem);
 itemRouter.put('/:itemId', updateItem);
 
 // ── Bag routes (/bags) ────────────────────────────────────────────────────────

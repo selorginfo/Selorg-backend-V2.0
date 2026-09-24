@@ -68,10 +68,14 @@ export async function sendToTokens(tokens: string[], payload: FcmPayload): Promi
   const message: MulticastMessage = {
     tokens,
     data,
-    android: { priority: 'high' },
+    notification: { title: payload.title, body: payload.body },
+    android: {
+      priority: 'high',
+      notification: { sound: 'default' },
+    },
     apns: {
       headers: { 'apns-priority': '10' },
-      payload: { aps: { contentAvailable: true, sound: 'push.mp3', badge: 1 } },
+      payload: { aps: { alert: { title: payload.title, body: payload.body }, sound: 'default', badge: 1 } },
     },
   };
 

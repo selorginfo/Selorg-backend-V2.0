@@ -399,6 +399,8 @@ export async function adminUpdateCoupon(id: string, body: Record<string, unknown
   if (payload.maxDiscountAmount !== undefined && payload.maxDiscount === undefined) payload.maxDiscount = payload.maxDiscountAmount;
   if (payload.validFrom !== undefined && payload.startDate === undefined) payload.startDate = payload.validFrom;
   if (payload.validTo !== undefined && payload.endDate === undefined) payload.endDate = payload.validTo;
+  if (payload.status === 'active') payload.isActive = true;
+  if (payload.status === 'paused' || payload.status === 'expired') payload.isActive = false;
   if (payload.isActive !== undefined && payload.status === undefined) payload.status = payload.isActive ? 'active' : 'paused';
   const updated = await couponsRepository.updateById(id, payload);
   if (!updated) {
