@@ -10,6 +10,8 @@ import * as cartService from '../cart/cart.service';
 import { resolveStoreId } from '../store/store.repository';
 import { DarkStore } from '../store/dark-store.model';
 import { emitOrderStatus, emitOrderAssigned } from '../../services/realtime.service';
+import { eventBus } from '../../events/eventBus';
+import { EVENT_TYPES } from '../../events/eventTypes';
 import { geocodeAddress } from '../../services/geocoding.service';
 import { assertStockAllowsAsync } from '../products/products.stock';
 import { buildPaymentMethodPresentation, buildEstimatedDeliveryMessage, inferInstrumentFieldsFromWorldline } from './paymentMethodDisplay';
@@ -604,7 +606,6 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     totalBill = (Number(safeTotals.finalAmount) || 0) + (deliveryTip || 0);
   }
 
-  const orderNumber = await orderRepo.generateOrderNumber();
   const slaMinutes = Math.max(10, Number(process.env.DEFAULT_DELIVERY_SLA_MINUTES) || 30);
   const estimatedDelivery =
     deliveryMode === 'scheduled' && scheduledWindowEnd
@@ -701,103 +702,148 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
 
   const session = await mongoose.startSession();
   let order!: IOrder;
+  let orderNumber = '';
   try {
-    await session.withTransaction(async () => {
-      const orderObjectId = new mongoose.Types.ObjectId();
+    const maxCreateAttempts = 5;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxCreateAttempts; attempt++) {
+      orderNumber = await orderRepo.generateOrderNumber();
+      paymentStatus = storedMethodType === 'cash' ? 'cod_pending' : 'pending';
+      try {
+        await session.withTransaction(async () => {
+          const orderObjectId = new mongoose.Types.ObjectId();
 
-      if (walletCheckoutRequested && walletDeduction > 0) {
-        const debit = await debitWalletForOrder(userId, walletDeduction, orderObjectId, { session, description: `Payment for order ${orderNumber}` });
-        if ('error' in debit) {
-          const err = new Error(debit.error) as Error & { code?: string };
-          err.code = 'WALLET_DEBIT_FAILED';
-          throw err;
-        }
-        if (storedMethodType === 'wallet') {
-          paymentStatus = 'paid';
-        }
-      } else if (storedMethodType === 'wallet') {
-        paymentStatus = 'paid';
-      }
-
-      const timelineNote =
-        storedMethodType === 'wallet'
-          ? 'Paid with Selorg Wallet'
-          : walletDeduction > 0
-            ? 'Partial wallet payment — awaiting online payment for remainder'
-            : deferFulfillment
-              ? 'Awaiting payment'
-              : 'Order placed';
-
-      const created = await orderRepo.create(
-        [
-          {
-            _id: orderObjectId,
-            userId: new mongoose.Types.ObjectId(userId),
-            orderNumber,
-            items: orderItems,
-            status: 'pending',
-            timeline: [{ status: 'pending', timestamp: new Date(), note: timelineNote, actor: 'customer' }],
-            addressId: address._id,
-            storeId: matchedStoreObjectId || undefined,
-            deliveryAddress: {
-              line1: address.line1,
-              line2: address.line2,
-              city: address.city,
-              state: address.state,
-              pincode: address.pincode,
-              landmark: address.label,
-              latitude: deliveryLatitude,
-              longitude: deliveryLongitude,
-            },
-            deliveryNotes: body.deliveryNotes || '',
-            customerName,
-            customerPhone,
-            deliveryMode,
-            deliverySlotId,
-            deliverySlotLabel,
-            scheduledWindowStart,
-            scheduledWindowEnd,
-            paymentMethodId: storedPaymentMethodId,
-            paymentMethod: { methodType: storedMethodType, last4: '' },
-            paymentStatus,
-            itemTotal,
-            totalTax,
-            handlingCharge,
-            deliveryFee,
-            deliveryTip: deliveryTip || 0,
-            discount,
-            walletDeduction,
-            onlineAmountDue,
-            totalBill,
-            estimatedDelivery,
-            etaMinutes,
-            pricingSnapshot: usePricingEngineForOrders ? engineResult : undefined,
-            fulfillmentReleased: false,
-            checkoutCouponCode: checkoutCouponCode || '',
-          },
-        ],
-        session,
-      );
-      order = created[0];
-
-      if (!deferFulfillment && couponCode) {
-        const normalizedCode = String(couponCode).trim().toUpperCase();
-        const couponDoc = await PricingCoupon.findOne({ code: normalizedCode }).session(session);
-        if (couponDoc) {
-          const existingRedemption = await CouponRedemption.findOne({ couponId: couponDoc._id, userId: new mongoose.Types.ObjectId(userId), orderId: order._id }).session(session);
-          if (!existingRedemption) {
-            await CouponRedemption.create([{ couponId: couponDoc._id, userId: new mongoose.Types.ObjectId(userId), orderId: order._id, discountApplied: discount }], { session });
-            await PricingCoupon.updateOne({ _id: couponDoc._id }, { $inc: { usageCount: 1 } }, { session });
+          if (walletCheckoutRequested && walletDeduction > 0) {
+            const debit = await debitWalletForOrder(userId, walletDeduction, orderObjectId, {
+              session,
+              description: `Payment for order ${orderNumber}`,
+            });
+            if ('error' in debit) {
+              const err = new Error(debit.error) as Error & { code?: string };
+              err.code = 'WALLET_DEBIT_FAILED';
+              throw err;
+            }
+            if (storedMethodType === 'wallet') {
+              paymentStatus = 'paid';
+            }
+          } else if (storedMethodType === 'wallet') {
+            paymentStatus = 'paid';
           }
-        }
-      }
 
-      // COD / full wallet: clear cart once persisted.
-      // Online / partial wallet: keep cart until releaseOrderFulfillment.
-      if (!deferFulfillment) {
-        await cartService.clearCart(userId, session);
+          const timelineNote =
+            storedMethodType === 'wallet'
+              ? 'Paid with Selorg Wallet'
+              : walletDeduction > 0
+                ? 'Partial wallet payment — awaiting online payment for remainder'
+                : deferFulfillment
+                  ? 'Awaiting payment'
+                  : 'Order placed';
+
+          const created = await orderRepo.create(
+            [
+              {
+                _id: orderObjectId,
+                userId: new mongoose.Types.ObjectId(userId),
+                orderNumber,
+                items: orderItems,
+                status: 'pending',
+                timeline: [{ status: 'pending', timestamp: new Date(), note: timelineNote, actor: 'customer' }],
+                addressId: address._id,
+                storeId: matchedStoreObjectId || undefined,
+                deliveryAddress: {
+                  line1: address.line1,
+                  line2: address.line2,
+                  city: address.city,
+                  state: address.state,
+                  pincode: address.pincode,
+                  landmark: address.label,
+                  latitude: deliveryLatitude,
+                  longitude: deliveryLongitude,
+                },
+                deliveryNotes: body.deliveryNotes || '',
+                customerName,
+                customerPhone,
+                deliveryMode,
+                deliverySlotId,
+                deliverySlotLabel,
+                scheduledWindowStart,
+                scheduledWindowEnd,
+                paymentMethodId: storedPaymentMethodId,
+                paymentMethod: { methodType: storedMethodType, last4: '' },
+                paymentStatus,
+                itemTotal,
+                totalTax,
+                handlingCharge,
+                deliveryFee,
+                deliveryTip: deliveryTip || 0,
+                discount,
+                walletDeduction,
+                onlineAmountDue,
+                totalBill,
+                estimatedDelivery,
+                etaMinutes,
+                pricingSnapshot: usePricingEngineForOrders ? engineResult : undefined,
+                fulfillmentReleased: false,
+                checkoutCouponCode: checkoutCouponCode || '',
+              },
+            ],
+            session,
+          );
+          order = created[0];
+
+          if (!deferFulfillment && couponCode) {
+            const normalizedCode = String(couponCode).trim().toUpperCase();
+            const couponDoc = await PricingCoupon.findOne({ code: normalizedCode }).session(session);
+            if (couponDoc) {
+              const existingRedemption = await CouponRedemption.findOne({
+                couponId: couponDoc._id,
+                userId: new mongoose.Types.ObjectId(userId),
+                orderId: order._id,
+              }).session(session);
+              if (!existingRedemption) {
+                await CouponRedemption.create(
+                  [
+                    {
+                      couponId: couponDoc._id,
+                      userId: new mongoose.Types.ObjectId(userId),
+                      orderId: order._id,
+                      discountApplied: discount,
+                    },
+                  ],
+                  { session },
+                );
+                await PricingCoupon.updateOne({ _id: couponDoc._id }, { $inc: { usageCount: 1 } }, { session });
+              }
+            }
+          }
+
+          // COD / full wallet: clear cart once persisted.
+          // Online / partial wallet: keep cart until releaseOrderFulfillment.
+          if (!deferFulfillment) {
+            await cartService.clearCart(userId, session);
+          }
+        });
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        const mongoCode = (err as { code?: number })?.code;
+        const msg = String((err as Error)?.message || '');
+        const isDupOrderNumber =
+          mongoCode === 11000 || /orderNumber.*already exists|E11000.*orderNumber/i.test(msg);
+        const walletFail =
+          (err as { code?: string })?.code === 'WALLET_DEBIT_FAILED' ||
+          /insufficient wallet|wallet not available/i.test(msg);
+        if (walletFail) {
+          return { error: msg || 'Wallet payment failed' };
+        }
+        if (isDupOrderNumber && attempt < maxCreateAttempts - 1) {
+          continue;
+        }
+        throw err;
       }
-    });
+    }
+    if (lastErr) throw lastErr;
   } catch (err) {
     const code = (err as { code?: string })?.code;
     const message = (err as Error)?.message || '';
@@ -864,6 +910,18 @@ const STATUS_NOTE_MAP: Record<string, string> = {
   cancelled: 'Order cancelled',
 };
 
+/** Map customer-order status → eventBus EVENT_TYPES so /customer-socket.io receives them. */
+const STATUS_TO_EVENT: Record<string, string> = {
+  confirmed: EVENT_TYPES.ORDER_CONFIRMED,
+  'getting-packed': EVENT_TYPES.ORDER_PICKING_STARTED,
+  'on-the-way': EVENT_TYPES.ORDER_OUT_FOR_DELIVERY,
+  arrived: EVENT_TYPES.ORDER_OUT_FOR_DELIVERY,
+  delivered: EVENT_TYPES.ORDER_DELIVERED,
+  cancelled: EVENT_TYPES.ORDER_CANCELLED,
+};
+
+const DEFAULT_HUB_KEY = process.env.DASHBOARD_HUB_KEY || 'DS-Adyar-01';
+
 export async function updateCustomerOrderStatus(orderId: string, newStatus: string, opts: { actor?: string; note?: string; riderId?: string } = {}): Promise<Record<string, unknown> | { error: string }> {
   const { actor, note, riderId } = opts;
   const order = await findOrderDoc(orderId);
@@ -887,6 +945,19 @@ export async function updateCustomerOrderStatus(orderId: string, newStatus: stri
   await order.save();
   notifyOrderStatus(order, newStatus, { actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system' });
   emitOrderStatus(String(order._id), { status: newStatus, orderNumber: order.orderNumber, note: note || '' });
+  // Bridge to customer/HHD/rider sockets via eventBus (admin socket alone is not enough).
+  const eventType = STATUS_TO_EVENT[newStatus];
+  if (eventType) {
+    eventBus.emit(eventType, {
+      orderId: String(order._id),
+      orderNumber: order.orderNumber,
+      userId: String(order.userId),
+      hubKey: order.offerHubKey || DEFAULT_HUB_KEY,
+      offerHubKey: order.offerHubKey || DEFAULT_HUB_KEY,
+      status: newStatus,
+      riderId: order.riderId ? String(order.riderId) : riderId || undefined,
+    });
+  }
   if (riderId) emitOrderAssigned(String(order._id), String(riderId), { orderNumber: order.orderNumber, status: newStatus });
   return formatOrderForApp(order.toObject());
 }

@@ -150,6 +150,14 @@ export async function updateProduct(req: Request, res: Response, next: NextFunct
     if (Array.isArray(body.images) && (body.images as string[]).length > 0 && !body.imageUrl) {
       body.imageUrl = (body.images as string[])[0];
     }
+    // Keep status ↔ isActive in sync so customer catalog filters stay consistent.
+    if (body.status !== undefined && body.isActive === undefined) {
+      const s = String(body.status).toLowerCase();
+      body.isActive = s === 'active';
+    }
+    if (body.isActive !== undefined && body.status === undefined) {
+      body.status = body.isActive ? 'active' : 'inactive';
+    }
     const product = await Product.findByIdAndUpdate(req.params.id, { $set: body }, { new: true, runValidators: false }).lean();
     if (!product) throw AppError.notFound('Product not found');
     res.status(200).json({ success: true, data: product });

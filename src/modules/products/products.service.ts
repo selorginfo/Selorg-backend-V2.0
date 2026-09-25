@@ -85,7 +85,13 @@ export async function getProductDetail(id: string, storeId?: string | null) {
 export async function searchProducts(query: string, options: { page: number; limit: number; category?: string; storeId?: string }) {
   const { page, limit, category, storeId } = options;
   const skip = (page - 1) * limit;
-  const filter: Record<string, unknown> = { isActive: true, isSaleable: true, classification: 'Style' };
+  const filter: Record<string, unknown> = {
+    isActive: true,
+    isSaleable: true,
+    classification: 'Style',
+    // status=inactive/draft must not appear even if isActive was left true by a partial update
+    status: { $nin: ['inactive', 'draft'] },
+  };
   if (category) filter.categoryId = category;
   if (storeId) {
     const { StoreInventory } = await import('./store-inventory.model');

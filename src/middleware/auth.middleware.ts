@@ -82,11 +82,40 @@ export function authenticateAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // Shared JWT_SECRET: reject workforce/picker tokens on admin routes.
+    // Shared JWT_SECRET: reject workforce/picker AND customer-storefront tokens on admin routes.
+    // Customer JWTs are signed with { sub, phoneNumber } and have no admin role/email claims.
+    // Without this check, when CUSTOMER_JWT_SECRET falls back to JWT_SECRET, any customer
+    // token verifies successfully and would otherwise be treated as an admin session.
     const typ = String(decoded.typ || decoded.tokenType || '').toLowerCase();
     const claimRole = String(decoded.role || decoded.roleId || '').toLowerCase();
     if (typ === 'picker' || claimRole === 'picker' || claimRole === 'workforce_picker' || (decoded.sid && !decoded.email)) {
       sendAuthError(res, req, 403, 'AUTH_WRONG_AUDIENCE', 'Picker tokens cannot access admin APIs.');
+      return;
+    }
+    const isCustomerShaped =
+      !decoded.email &&
+      !claimRole &&
+      !!(decoded.sub || decoded.phoneNumber) &&
+      !decoded.userId &&
+      !decoded.id;
+    if (isCustomerShaped || typ === 'customer' || claimRole === 'customer') {
+      logger.warn('Rejected customer token at admin auth', { requestId: req.id, path: req.path });
+      sendAuthError(res, req, 403, 'AUTH_WRONG_AUDIENCE', 'Customer tokens cannot access admin APIs.');
+      return;
+    }
+    // Defense in depth: every admin session must carry an admin-capable role claim.
+    const adminCapableRoles = new Set(['admin', 'super_admin', 'manager', 'ops', 'support', 'finance', 'catalog']);
+    if (claimRole && !adminCapableRoles.has(claimRole) && claimRole !== '*') {
+      // Allow directory roleIds (ObjectId strings) — those are looked up via permissions.
+      const looksLikeObjectId = /^[a-f0-9]{24}$/i.test(claimRole);
+      if (!looksLikeObjectId) {
+        sendAuthError(res, req, 403, 'AUTH_WRONG_AUDIENCE', 'This token is not valid for the dashboard API.');
+        return;
+      }
+    }
+    // Tokens with neither role nor email cannot be admin sessions (even if signed with JWT_SECRET).
+    if (!decoded.email && !claimRole) {
+      sendAuthError(res, req, 403, 'AUTH_WRONG_AUDIENCE', 'This token is not valid for the dashboard API.');
       return;
     }
 

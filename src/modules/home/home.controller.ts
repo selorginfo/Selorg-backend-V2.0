@@ -311,7 +311,9 @@ export async function listBannersAdmin(req: Request, res: Response, next: NextFu
 export async function createBannerAdmin(req: Request, res: Response, next: NextFunction) {
   try {
     const { Banner } = await import('../banners/banners.model');
+    const { registerBannerInHomeSection } = await import('../banners/banners.service');
     const item = await Banner.create(req.body);
+    await registerBannerInHomeSection(item.toObject ? item.toObject() : item);
     res.status(201).json({ success: true, data: item });
   } catch (err) { next(err); }
 }
@@ -319,10 +321,16 @@ export async function createBannerAdmin(req: Request, res: Response, next: NextF
 export async function updateBannerAdmin(req: Request, res: Response, next: NextFunction) {
   try {
     const { Banner } = await import('../banners/banners.model');
+    const { registerBannerInHomeSection, unregisterBannerFromHomeSections } = await import('../banners/banners.service');
     const body = { ...req.body };
     delete body._id;
     const item = await Banner.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true }).lean();
     if (!item) { res.status(404).json({ success: false, message: 'Banner not found' }); return; }
+    if (item.isActive === false) {
+      await unregisterBannerFromHomeSections(String(item._id));
+    } else {
+      await registerBannerInHomeSection(item);
+    }
     res.status(200).json({ success: true, data: item });
   } catch (err) { next(err); }
 }
@@ -330,7 +338,9 @@ export async function updateBannerAdmin(req: Request, res: Response, next: NextF
 export async function deleteBannerAdmin(req: Request, res: Response, next: NextFunction) {
   try {
     const { Banner } = await import('../banners/banners.model');
+    const { unregisterBannerFromHomeSections } = await import('../banners/banners.service');
     await Banner.findByIdAndDelete(req.params.id);
+    await unregisterBannerFromHomeSections(String(req.params.id));
     res.status(200).json({ success: true, message: 'Banner deleted' });
   } catch (err) { next(err); }
 }
@@ -425,7 +435,12 @@ export async function patchProductStatusAdmin(req: Request, res: Response, next:
   try {
     const { Product } = await import('../products/products.model');
     const { status } = req.body as { status: string };
-    const item = await Product.findByIdAndUpdate(req.params.id, { $set: { status } }, { new: true }).lean();
+    const statusNorm = String(status || '').toLowerCase();
+    const update: Record<string, unknown> = { status };
+    // Keep isActive in sync so customer search/PDP filters stay consistent.
+    if (statusNorm === 'active' || statusNorm === 'published') update.isActive = true;
+    else if (statusNorm === 'inactive' || statusNorm === 'draft') update.isActive = false;
+    const item = await Product.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).lean();
     if (!item) { res.status(404).json({ success: false, message: 'Product not found' }); return; }
     res.status(200).json({ success: true, data: item });
   } catch (err) { next(err); }

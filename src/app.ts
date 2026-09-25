@@ -27,6 +27,10 @@ import faqRoutes, { adminRouter as faqAdminRoutes } from './modules/faq/faq.rout
 import bannersRoutes, { adminRouter as bannersAdminRoutes } from './modules/banners/banners.routes';
 import onboardingRoutes, { adminRouter as onboardingAdminRoutes } from './modules/onboarding/onboarding.routes';
 import userRoutes from './modules/user/user.routes';
+import * as userController from './modules/user/user.controller';
+import { updateProfileSchema } from './modules/user/user.validation';
+import { validate } from './middleware/validate.middleware';
+import { authenticateAdmin, authenticateCustomer } from './middleware/auth.middleware';
 import addressesRoutes from './modules/addresses/addresses.routes';
 import notificationsRoutes, { adminRouter as notificationsAdminRoutes } from './modules/notifications/notifications.routes';
 import productsRoutes from './modules/products/products.routes';
@@ -40,6 +44,7 @@ import refundsRoutes from './modules/refunds/refunds.routes';
 import invoiceRoutes from './modules/invoice/invoice.routes';
 import supportRoutes, { publicRouter as publicSupportRoutes } from './modules/support/support.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import { stallAppRouter } from './modules/delivery-stalls/ops.routes';
 import riderRoutes from './modules/rider/rider.routes';
 import pickerRoutes, { pickerAdminRouter } from './modules/picker/picker.routes';
 import darkstoreRoutes from './modules/darkstore/darkstore.routes';
@@ -184,6 +189,9 @@ export function createApp() {
   app.use('/api/v1/customer/onboarding', onboardingRoutes);
   app.use('/api/v1/customer/admin/onboarding-pages', onboardingAdminRoutes);
   app.use('/api/v1/customer/user', userRoutes);
+  // Compatibility aliases for clients that call /api/v1/customer/profile (not /user/profile)
+  app.get('/api/v1/customer/profile', authenticateCustomer, userController.getProfile);
+  app.put('/api/v1/customer/profile', authenticateCustomer, validate(updateProfileSchema), userController.updateProfile);
   app.use('/api/v1/customer/addresses', addressesRoutes);
   app.use('/api/v1/customer/notifications', notificationsRoutes);
   app.use('/api/v1/customer/admin/notifications', notificationsAdminRoutes);
@@ -203,6 +211,7 @@ export function createApp() {
   app.use('/api/v1/customer/support', supportRoutes);
   app.use('/api/v1/support', publicSupportRoutes);
   app.use('/api/v1/admin', adminRoutes);
+  app.use('/api/v1/stall-app', authenticateAdmin, stallAppRouter);
   app.use('/api/v1/rider', riderRoutes);
   app.use('/api/v1/picker', pickerRoutes);
   app.use('/api/v1/admin/picker', pickerAdminRouter);

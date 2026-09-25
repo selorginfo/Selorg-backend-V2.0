@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import { AppError } from '../../utils/AppError';
+import { logger } from '../../utils/logger';
 import * as bannersRepo from './banners.repository';
 import { IContentItem } from './banners.model';
 
@@ -15,6 +17,68 @@ function collectProductIds(items: LeanContentItem[]): unknown[] {
     }
   }
   return ids;
+}
+
+/** Register an active banner into the matching home section definition so /home surfaces it. */
+export async function registerBannerInHomeSection(banner: { _id: unknown; slot?: string; isActive?: boolean }): Promise<void> {
+  if (banner.isActive === false) return;
+  const slot = String(banner.slot || 'hero').toLowerCase();
+  const sectionKey =
+    slot === 'hero' || slot === 'banner_main' || slot === 'main'
+      ? 'hero_banner'
+      : slot === 'mid' || slot === 'banner_sub' || slot === 'sub'
+        ? 'mid_banner'
+        : null;
+  if (!sectionKey) return;
+
+  try {
+    const { HomeSectionDefinition } = await import('../home/home.models');
+    const bannerId = new mongoose.Types.ObjectId(String(banner._id));
+    const existing = await HomeSectionDefinition.findOne({ key: sectionKey }).lean();
+    if (existing) {
+      const already = (existing.bannerIds || []).some((id) => String(id) === String(bannerId));
+      if (already) return;
+      await HomeSectionDefinition.updateOne(
+        { key: sectionKey },
+        {
+          $addToSet: { bannerIds: bannerId },
+          $set: {
+            bannerSelectionMode: 'multiple',
+            type: existing.type || (sectionKey === 'hero_banner' ? 'banner_main' : 'banner_sub'),
+          },
+        },
+      );
+    } else {
+      await HomeSectionDefinition.create({
+        key: sectionKey,
+        label: sectionKey === 'hero_banner' ? 'Featured Offers' : 'Recommended for You',
+        type: sectionKey === 'hero_banner' ? 'banner_main' : 'banner_sub',
+        order: sectionKey === 'hero_banner' ? 0 : 2,
+        bannerIds: [bannerId],
+        bannerSelectionMode: 'multiple',
+        useCarousel: true,
+      });
+    }
+  } catch (err) {
+    logger.warn('[banners] failed to register banner in home section', {
+      bannerId: String(banner._id),
+      error: (err as Error).message,
+    });
+  }
+}
+
+/** Remove a banner from home section definitions (on deactivate/delete). */
+export async function unregisterBannerFromHomeSections(bannerId: string): Promise<void> {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(bannerId)) return;
+    const { HomeSectionDefinition } = await import('../home/home.models');
+    await HomeSectionDefinition.updateMany({}, { $pull: { bannerIds: new mongoose.Types.ObjectId(bannerId) } });
+  } catch (err) {
+    logger.warn('[banners] failed to unregister banner from home sections', {
+      bannerId,
+      error: (err as Error).message,
+    });
+  }
 }
 
 /** Resolves productIds within banner content blocks (including nested sub-page blocks) for the landing page. */

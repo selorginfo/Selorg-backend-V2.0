@@ -269,4 +269,24 @@ export const orderRealtime = {
   notifyCustomer(userId: string | null | undefined, event: string, payload: OrderEventPayload): void {
     emitToCustomer(userId, event, payload);
   },
+  /** Live rider GPS for the customer tracking map. Includes coordinates (status events do not). */
+  emitRiderGps(input: {
+    orderId: string;
+    userId?: string | null;
+    latitude: number;
+    longitude: number;
+    heading?: number | null;
+  }): void {
+    if (!customerIo || !input.orderId) return;
+    const body = {
+      event: 'rider:location',
+      orderId: input.orderId,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      heading: input.heading ?? null,
+      at: new Date().toISOString(),
+    };
+    customerIo.to(orderRoom(input.orderId)).emit('rider:location', body);
+    if (input.userId) customerIo.to(customerRoom(String(input.userId))).emit('rider:location', body);
+  },
 };

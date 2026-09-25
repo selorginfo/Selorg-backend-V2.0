@@ -206,8 +206,25 @@ export async function getMapRiders(filters: { status?: string; zone?: string } =
   const riders = (await Rider.find(query).lean()) as Record<string, unknown>[];
   const counts: Record<string, number> = {};
   riders.forEach((r) => { counts[r.status as string] = (counts[r.status as string] || 0) + 1; });
+  // Include riders without GPS so Admin never falls back to design seed when the fleet exists offline.
   return {
-    riders: riders.filter((r) => isValidCoord((r.location as { lat: number; lng: number } | null)?.lat, (r.location as { lat: number; lng: number } | null)?.lng)).map((r) => ({ id: r.id, name: r.name, status: r.status, location: r.location, zone: r.zone, capacity: r.capacity })),
+    riders: riders.map((r) => {
+      const loc = r.location as { lat?: number; lng?: number } | null;
+      const hasGps = isValidCoord(loc?.lat, loc?.lng);
+      return {
+        id: r.id || r._id,
+        name: r.name,
+        status: r.status,
+        location: hasGps ? loc : { lat: 12.9716, lng: 77.5946 },
+        zone: r.zone,
+        capacity: r.capacity,
+        hub: r.hub || r.darkStore || r.assignedStore,
+        currentOrder: r.currentOrderId || r.currentOrder || r.activeOrder,
+        vehicle: r.vehicle || r.vehicleType,
+        rating: r.rating,
+        gpsStale: !hasGps,
+      };
+    }),
     statusCounts: { online: counts.online || 0, busy: counts.busy || 0, idle: counts.idle || 0, offline: counts.offline || 0 },
   };
 }

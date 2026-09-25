@@ -137,6 +137,14 @@ export interface IOrder extends Document {
   pickedUpAt?: Date | null;
   riderPayout: number;
   riderEarningBreakdown?: { base?: number; distance?: number; incentive?: number };
+  /** Container-stall attribution — set when the order originated from a stall conversion. */
+  stallAttribution?: {
+    stallId?: string;
+    employeeId?: string;
+    conversionId?: string;
+    areaId?: string;
+    attributedAt?: Date;
+  } | null;
   dispatchBay?: string;
   bagCode?: string;
   distanceKm?: number;
@@ -145,6 +153,17 @@ export interface IOrder extends Document {
   slaDeadline?: Date | null;
   deliveryType: 'standard' | 'bulk';
   bulkBatchId?: string | null;
+  /** Admin B2C bulk-order workflow. Present only when deliveryType is bulk. */
+  adminFulfillment?: {
+    stage?: number;
+    paymentLabel?: string;
+    slot?: string;
+    contactEmail?: string;
+    displayName?: string;
+    pickerName?: string;
+    riderName?: string;
+    addressText?: string;
+  };
   podPhotoId?: mongoose.Types.ObjectId | null;
   riderCancellationReason?: RiderCancelReason | BulkExceptionReason | null;
   riderCancellationNote?: string;
@@ -229,6 +248,13 @@ const orderSchema = new Schema<IOrder>(
     pickedUpAt: { type: Date, default: null },
     riderPayout: { type: Number, default: 0 },
     riderEarningBreakdown: { base: Number, distance: Number, incentive: Number },
+    stallAttribution: {
+      stallId: { type: String },
+      employeeId: { type: String },
+      conversionId: { type: String },
+      areaId: { type: String },
+      attributedAt: { type: Date },
+    },
     dispatchBay: { type: String },
     bagCode: { type: String },
     distanceKm: { type: Number },
@@ -237,6 +263,21 @@ const orderSchema = new Schema<IOrder>(
     slaDeadline: { type: Date, default: null },
     deliveryType: { type: String, enum: ['standard', 'bulk'], default: 'standard', index: true },
     bulkBatchId: { type: String, default: null, index: true },
+    /**
+     * Admin lifecycle for B2C bulk orders (`deliveryType: 'bulk'`).
+     * Customer-facing `status` stays the existing order enum; this block holds the
+     * dashboard stage, payment label and assignment names the Delivery module reads.
+     */
+    adminFulfillment: {
+      stage: { type: Number, default: 0 },
+      paymentLabel: { type: String, default: 'Pending' },
+      slot: { type: String, default: '' },
+      contactEmail: { type: String, default: '' },
+      displayName: { type: String, default: '' },
+      pickerName: { type: String, default: '' },
+      riderName: { type: String, default: '' },
+      addressText: { type: String, default: '' },
+    },
     podPhotoId: { type: Schema.Types.ObjectId, ref: 'PickerPodPhoto', default: null },
     riderCancellationReason: { type: String, default: null },
     riderCancellationNote: { type: String, default: '' },

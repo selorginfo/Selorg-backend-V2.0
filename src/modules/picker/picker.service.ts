@@ -7,6 +7,7 @@ import {
 } from './picker.models';
 import { Order } from '../orders/order.model';
 import { storeRiderPosition, emitRiderLocation, emitOrderStatus } from '../../services/realtime.service';
+import { broadcastRiderGps } from '../orders/fulfillment.service';
 import { bankLabel, maskAccountNumber } from './picker.format';
 
 // ─── User Profile ─────────────────────────────────────────────────────────────
@@ -685,6 +686,7 @@ export async function updateUserLocation(userId: string, latitude: number, longi
   const result = await PickerUser.findByIdAndUpdate(userId, { gpsLocation: { latitude, longitude, timestamp: new Date() }, lastSeenAt: new Date() }, { new: true }).select('gpsLocation').lean();
   await storeRiderPosition(userId, latitude, longitude);
   emitRiderLocation(userId, latitude, longitude);
+  void broadcastRiderGps(userId, latitude, longitude);
   return result;
 }
 
@@ -704,6 +706,7 @@ export async function updateLastSeen(userId: string, batteryLevel?: number, loca
   if (location && typeof location.latitude === 'number' && typeof location.longitude === 'number') {
     await storeRiderPosition(userId, location.latitude, location.longitude);
     emitRiderLocation(userId, location.latitude, location.longitude);
+    void broadcastRiderGps(userId, location.latitude, location.longitude);
   }
   return result;
 }

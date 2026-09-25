@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { logger } from '../../utils/logger';
 import { AppError } from '../../utils/AppError';
 import { eventBus } from '../../events/eventBus';
+import { orderRealtime } from '../../realtime/orderRealtime';
 import { EVENT_TYPES } from '../../events/eventTypes';
 import { sendWebPush } from '../../services/webpush.service';
 import { sendToTokens } from '../../services/fcm.service';
@@ -768,6 +769,37 @@ function mapPoint(lat: unknown, lng: unknown): { latitude: number; longitude: nu
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
   if (latitude === 0 && longitude === 0) return null;
   return { latitude, longitude };
+}
+
+/** Push the latest rider fix to the customer watching this order. */
+export async function broadcastRiderGps(
+  pickerId: string,
+  latitude: number,
+  longitude: number,
+  orderId?: string | null,
+  heading?: number | null,
+): Promise<void> {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+  let id = orderId && mongoose.isValidObjectId(orderId) ? String(orderId) : '';
+  let userId: string | null = null;
+  if (id) {
+    const order = await Order.findById(id).select('userId status').lean();
+    if (!order || order.status === 'delivered' || order.status === 'cancelled') return;
+    userId = order.userId ? String(order.userId) : null;
+  } else if (mongoose.isValidObjectId(pickerId)) {
+    const order = await Order.findOne({
+      pickerId: new mongoose.Types.ObjectId(pickerId),
+      status: { $in: ['confirmed', 'getting-packed', 'on-the-way', 'arrived'] },
+    })
+      .sort({ updatedAt: -1 })
+      .select('_id userId')
+      .lean();
+    if (!order) return;
+    id = String(order._id);
+    userId = order.userId ? String(order.userId) : null;
+  }
+  if (!id) return;
+  orderRealtime.emitRiderGps({ orderId: id, userId, latitude, longitude, heading });
 }
 
 export async function notifyRiderAccepted(order: IOrder): Promise<void> {

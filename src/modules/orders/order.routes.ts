@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../../middleware/validate.middleware';
-import { authenticateCustomer, authenticateAdmin } from '../../middleware/auth.middleware';
+import { authenticateCustomer, authenticateAdmin, requireRole } from '../../middleware/auth.middleware';
 import * as orderController from './order.controller';
 import { cancelOrderSchema, createOrderSchema, listOrdersQuerySchema, rateOrderSchema, updateOrderStatusSchema, verifyOrderOtpSchema } from './order.validation';
 
@@ -16,21 +16,24 @@ router.get('/:id/status', authenticateCustomer, orderController.status);
 router.get('/:id/tracking', authenticateCustomer, orderController.tracking);
 router.post('/:id/rate', authenticateCustomer, validate(rateOrderSchema), orderController.rate);
 router.post('/:id/verify-otp', authenticateCustomer, validate(verifyOrderOtpSchema), orderController.verifyOtp);
-// Dashboard/rider status transition — admin-authenticated, matches legacy `authenticateToken` on this route.
-router.put('/:id/update-status', authenticateAdmin, validate(updateOrderStatusSchema), orderController.updateStatus);
+// Dashboard status transition — admin role required (never accept a customer JWT).
+router.put('/:id/update-status', authenticateAdmin, requireRole('admin', 'super_admin'), validate(updateOrderStatusSchema), orderController.updateStatus);
 router.post('/:id/reorder', authenticateCustomer, orderController.reorder);
 
 // ─── Admin-authenticated sub-router ──────────────────────────────────────────
 // Mounted separately at /api/v1/admin/orders (see app.ts).
+// MUST requireRole — authenticateAdmin alone is not enough when JWT_SECRET is shared
+// with customer tokens (CUSTOMER_JWT_SECRET unset).
 export const adminOrderRouter = Router();
-adminOrderRouter.get('/', authenticateAdmin, orderController.adminList);
-adminOrderRouter.get('/:id', authenticateAdmin, orderController.adminGetDetail);
-adminOrderRouter.get('/:id/logs', authenticateAdmin, orderController.adminGetLogs);
-adminOrderRouter.put('/:id/update-status', authenticateAdmin, validate(updateOrderStatusSchema), orderController.updateStatus);
-adminOrderRouter.post('/:id/notes', authenticateAdmin, orderController.adminAddNote);
-adminOrderRouter.post('/:id/reassign-picker', authenticateAdmin, orderController.adminReassignPicker);
-adminOrderRouter.post('/:id/reassign-rider', authenticateAdmin, orderController.adminReassignRider);
-adminOrderRouter.post('/:id/contact', authenticateAdmin, orderController.adminContactCustomer);
-adminOrderRouter.post('/:id/refund', authenticateAdmin, orderController.adminInitiateRefund);
+adminOrderRouter.use(authenticateAdmin, requireRole('admin', 'super_admin'));
+adminOrderRouter.get('/', orderController.adminList);
+adminOrderRouter.get('/:id', orderController.adminGetDetail);
+adminOrderRouter.get('/:id/logs', orderController.adminGetLogs);
+adminOrderRouter.put('/:id/update-status', validate(updateOrderStatusSchema), orderController.updateStatus);
+adminOrderRouter.post('/:id/notes', orderController.adminAddNote);
+adminOrderRouter.post('/:id/reassign-picker', orderController.adminReassignPicker);
+adminOrderRouter.post('/:id/reassign-rider', orderController.adminReassignRider);
+adminOrderRouter.post('/:id/contact', orderController.adminContactCustomer);
+adminOrderRouter.post('/:id/refund', orderController.adminInitiateRefund);
 
 export default router;

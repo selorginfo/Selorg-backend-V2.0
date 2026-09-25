@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticateAdmin, optionalCustomerAuth } from '../../middleware/auth.middleware';
+import { authenticateAdmin, optionalCustomerAuth, requireRole } from '../../middleware/auth.middleware';
 import * as homeController from './home.controller';
 
 const router = Router();
@@ -8,8 +8,9 @@ const adminRouter = Router();
 // Public: GET /home → full home feed payload
 router.get('/', optionalCustomerAuth, homeController.getHome);
 
-// Admin CMS routes
-adminRouter.use(authenticateAdmin);
+// Admin CMS routes — require an admin role (authenticateAdmin alone is insufficient when
+// CUSTOMER_JWT_SECRET falls back to JWT_SECRET; customer tokens must never reach CMS writes).
+adminRouter.use(authenticateAdmin, requireRole('admin', 'super_admin'));
 
 // Config
 adminRouter.get('/config', homeController.getConfig);

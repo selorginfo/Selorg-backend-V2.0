@@ -20,7 +20,14 @@ const DETAIL_EXCLUDE = {
 const RELATED_EXCLUDE = { baseCost: 0, vendorCode: 0, mfgSkuCode: 0, hsnCode: 0, udf: 0, meta: 0 };
 
 export function findProductDetailById(id: string) {
-  return Product.findById(id).select(DETAIL_EXCLUDE).lean();
+  // Customer PDP: hide deactivated / draft products (must match search visibility rules).
+  return Product.findOne({
+    _id: id,
+    isActive: { $ne: false },
+    status: { $nin: ['inactive', 'draft'] },
+  })
+    .select(DETAIL_EXCLUDE)
+    .lean();
 }
 
 export function findSiblingsByHierarchyCode(hierarchyCode: string) {
@@ -76,6 +83,7 @@ export async function searchSuggestions(query: string, limit = 5) {
     isActive: true,
     isSaleable: true,
     classification: 'Style',
+    status: { $nin: ['inactive', 'draft'] },
     $or: [
       { name: { $regex: regex } },
       { searchKeywords: { $elemMatch: { $regex: regex } } },

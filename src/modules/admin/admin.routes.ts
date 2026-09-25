@@ -26,6 +26,8 @@ import complianceRoutes from './compliance.routes';
 import fraudRoutes from './fraud.routes';
 import notificationCampaignRoutes from './notification-campaign.routes';
 import analyticsRoutes from './analytics.routes';
+import deliveryStallsRoutes from '../delivery-stalls/ops.routes';
+import deliveryAdminRoutes from '../delivery/delivery-admin.routes';
 import { sessionsRouter, accessLogsRouter, auditLogsRouter } from './activity-logs.routes';
 import {
   adminLoginSchema,
@@ -124,6 +126,8 @@ protectedRouter.use('/compliance', complianceRoutes);
 protectedRouter.use('/fraud', fraudRoutes);
 protectedRouter.use('/notifications', notificationCampaignRoutes);
 protectedRouter.use('/analytics', analyticsRoutes);
+protectedRouter.use('/', deliveryAdminRoutes);
+protectedRouter.use('/', deliveryStallsRoutes);
 
 // ─── Rider Master Data ────────────────────────────────────────────────────────
 const riderMasterDataRouter = Router();

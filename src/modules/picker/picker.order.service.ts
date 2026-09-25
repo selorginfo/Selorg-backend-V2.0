@@ -818,6 +818,7 @@ export async function trackLocation(
     ),
   ]);
 
+  void fulfillment.broadcastRiderGps(pickerId, input.latitude, input.longitude, input.orderId, input.heading);
   return { tracked: true, recordedAt: recordedAt.toISOString(), nextPingSeconds: pickerConfig.locationPingSeconds };
 }
 
