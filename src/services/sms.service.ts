@@ -120,10 +120,16 @@ function classifySmsError(provider: string, statusCode: number | null, body: str
       internalLog: `[SMS] ${provider} insufficient balance status=${code} body=${raw.slice(0, 200)}`,
     };
   }
-  if (/daily\s*limit|limit\s*exceeded|quota\s*exceeded|max\s*sms|per\s*day\s*limit/i.test(lower)) {
+  // Twilio 63038 = trial/account rolling daily message cap (wording often
+  // "exceeded the 50 daily messages limit" — not matched by `daily\s*limit`).
+  if (
+    /\b63038\b/.test(raw) ||
+    /daily\s*(messages?\s*)?limit|limit\s*exceeded|quota\s*exceeded|max\s*sms|per\s*day\s*limit/i.test(lower)
+  ) {
     return {
       sent: false,
       errorCode: 'SMS_DAILY_LIMIT',
+      providerErrorCode: raw.match(/\b63038\b/)?.[0],
       userMessage: 'SMS limit reached. Please try again tomorrow.',
       internalLog: `[SMS] ${provider} daily limit status=${code} body=${raw.slice(0, 200)}`,
     };
@@ -518,31 +524,41 @@ export async function sendOtpSms(phone: string, otp: string, otpExpiryMinutes = 
 
   try {
     let attempted: SmsResult | null = null;
+    // Prefer actionable India-primary failures (SpearUC empty wallet) over Twilio trial caps.
+    let preferredFailure: SmsResult | null = null;
 
     const cfg = loadOtpConfig();
     if (cfg.smsVendorUrl) {
       const r = await sendViaConfigSms(trimmed, otp);
       if (r.sent) return r;
       attempted = r;
+      if (r.errorCode === 'SMS_INSUFFICIENT_BALANCE' || r.errorCode === 'SMS_DLT_NOT_APPROVED') {
+        preferredFailure = r;
+      }
+      logger.warn(`[SMS] config_smsvendor failed for ${trimmed}: ${r.errorCode || r.userMessage || r.internalLog || 'unknown'}`);
     }
     if (getMsg91Config().authKey) {
       const r = await sendViaMsg91(trimmed, otp, otpExpiryMinutes);
       if (r.sent) return r;
       attempted = r;
+      logger.warn(`[SMS] MSG91 failed for ${trimmed}: ${r.errorCode || r.userMessage || r.internalLog || 'unknown'}`);
     }
     if (getFast2SmsConfig().apiKey) {
       const r = await sendViaFast2SMS(trimmed, otp);
       if (r.sent) return r;
       attempted = r;
+      logger.warn(`[SMS] Fast2SMS failed for ${trimmed}: ${r.errorCode || r.userMessage || r.internalLog || 'unknown'}`);
     }
     const twilioCfg = getTwilioConfig();
     if (twilioCfg.accountSid && twilioCfg.authToken && twilioCfg.phoneNumber) {
       const r = await sendViaTwilio(trimmed, otp);
       if (r.sent) return r;
       attempted = r;
+      logger.warn(`[SMS] Twilio failed for ${trimmed}: ${r.errorCode || r.userMessage || r.internalLog || 'unknown'}`);
     }
     // A provider was configured and actually tried — surface its real failure reason
     // instead of the misleading "not configured" message below.
+    if (preferredFailure) return preferredFailure;
     if (attempted) return attempted;
 
     logger.info(`[SMS] No provider configured — OTP for ${trimmed}: ${otp}`);

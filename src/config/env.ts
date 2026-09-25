@@ -56,7 +56,13 @@ export const appConfig = {
     allowFixedTestOtp:
       String(process.env.ALLOW_CUSTOMER_TEST_OTP || '').toLowerCase() === 'true' ||
       (process.env.NODE_ENV || 'development') !== 'production',
-    devMode: process.env.OTP_DEV_MODE === '1' || process.env.OTP_DEV_MODE === 'true',
+    // Case-insensitive so OTP_DEV_MODE=False in .env is respected.
+    devMode: (() => {
+      const raw = String(process.env.OTP_DEV_MODE || '')
+        .trim()
+        .toLowerCase();
+      return raw === '1' || raw === 'true';
+    })(),
     testMobile: (process.env.OTP_TEST_MOBILE || '9698790921').replace(/\D/g, '').slice(-10),
     testOtp: process.env.OTP_TEST_OTP || '8790',
   },

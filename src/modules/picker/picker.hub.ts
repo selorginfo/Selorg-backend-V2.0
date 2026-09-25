@@ -52,11 +52,26 @@ export async function resolveWarehouseKey(
   return DEFAULT_HUB_KEY;
 }
 
-/** Ensure the Adyar operational hub exists even when Bangalore demo hubs were seeded first. */
+/**
+ * Ensure the Adyar operational hub exists with GPS + geofence.
+ * Always `$set` coords/radius so older inserts without coordinates still geofence correctly.
+ */
 export async function ensureOperationalHubs(): Promise<void> {
   await PickerWorkLocation.updateOne(
     { warehouseKey: ADYAR_HUB.warehouseKey },
-    { $setOnInsert: ADYAR_HUB },
+    {
+      $set: {
+        name: ADYAR_HUB.name,
+        address: ADYAR_HUB.address,
+        type: ADYAR_HUB.type,
+        isActive: ADYAR_HUB.isActive,
+        coordinates: ADYAR_HUB.coordinates,
+        geo: ADYAR_HUB.geo,
+        geofenceRadius: ADYAR_HUB.geofenceRadius,
+        dispatchBays: ADYAR_HUB.dispatchBays,
+      },
+      $setOnInsert: { warehouseKey: ADYAR_HUB.warehouseKey },
+    },
     { upsert: true },
   );
 }

@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-// ─── Picker User ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker User â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Vehicle classes a rider can be assigned.
@@ -24,7 +24,7 @@ export const BULK_VEHICLE_TYPES: readonly PickerVehicleType[] = [
   'van',
 ];
 
-/** Single place the Auto / EV Auto / van ⇒ bulk rule lives. */
+/** Single place the Auto / EV Auto / van â‡’ bulk rule lives. */
 export function deriveDeliveryMode(vehicleType?: string | null): 'standard' | 'bulk' {
   return BULK_VEHICLE_TYPES.includes(vehicleType as PickerVehicleType) ? 'bulk' : 'standard';
 }
@@ -37,12 +37,22 @@ export interface IPickerPreferences {
   locationSharing: boolean;
   orderSoundAlerts: boolean;
   language: PickerLanguage;
-  /** Picker-app extras — rider clients ignore these. */
+  /** Picker-app extras â€” rider clients ignore these. */
   shiftReminders?: boolean;
   payoutAlerts?: boolean;
   incentiveUpdates?: boolean;
   updatedAt?: Date;
 }
+
+export const VALID_PICKER_USER_STATUSES = [
+  'PENDING',
+  'ACTIVE',
+  'INACTIVE',
+  'REJECTED',
+  'SUSPENDED',
+  'BLOCKED',
+  'DELETION_PENDING',
+] as const;
 
 export type PickerUserStatus =
   | 'PENDING'
@@ -60,6 +70,11 @@ export function parseWorkforceRole(raw?: unknown): WorkforceRole | undefined {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'picker' || v === 'rider') return v;
   return undefined;
+}
+
+/** Legacy unset role is treated as rider (admin list + dispatch already default this way). */
+export function effectiveWorkforceRole(user: { workforceRole?: WorkforceRole | string | null }): WorkforceRole {
+  return parseWorkforceRole(user.workforceRole) || 'rider';
 }
 
 export function pickerDisplayRole(user: {
@@ -263,13 +278,13 @@ const PickerUserSchema = new Schema<IPickerUser>(
 PickerUserSchema.index({ status: 1 });
 PickerUserSchema.index({ lastSeenAt: -1 });
 // Email login looks accounts up by address. Non-unique: legacy rows may share one.
-PickerUserSchema.index({ email: 1 }, { sparse: true });
+PickerUserSchema.index({ email: 1 }, { unique: true, sparse: true });
 // Order offer fan-out: online riders at a hub on a given delivery mode.
 PickerUserSchema.index({ isOnline: 1, currentLocationId: 1, deliveryMode: 1 });
 
 export const PickerUser = mongoose.models.PickerUser || mongoose.model<IPickerUser>('PickerUser', PickerUserSchema);
 
-// ─── Picker OTP ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker OTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerOtp extends Document {
   identifier: string;
@@ -277,9 +292,14 @@ export interface IPickerOtp extends Document {
   expiresAt: Date;
   attempts: number;
   verified: boolean;
-  /** Sends inside the current throttle window — survives the per-send `attempts` reset. */
+  /** Sends inside the current throttle window â€” survives the per-send `attempts` reset. */
   sendCount: number;
   windowStartedAt?: Date;
+  /** LOGIN | REGISTRATION — OTP cannot be reused across flows. */
+  purpose: 'LOGIN' | 'REGISTRATION';
+  pendingPhone?: string | null;
+  pendingEmail?: string | null;
+  pendingUserId?: string | null;
   createdAt: Date;
 }
 
@@ -292,13 +312,17 @@ const PickerOtpSchema = new Schema<IPickerOtp>(
     verified: { type: Boolean, default: false },
     sendCount: { type: Number, default: 0 },
     windowStartedAt: { type: Date },
+    purpose: { type: String, enum: ['LOGIN', 'REGISTRATION'], default: 'LOGIN', index: true },
+    pendingPhone: { type: String, default: null },
+    pendingEmail: { type: String, default: null },
+    pendingUserId: { type: String, default: null },
   },
   { timestamps: true, collection: 'picker_otps' },
 );
 
 export const PickerOtp = mongoose.models.PickerOtp || mongoose.model<IPickerOtp>('PickerOtp', PickerOtpSchema);
 
-// ─── Picker Shift ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Shift â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerShift extends Document {
   id?: string;
@@ -310,7 +334,7 @@ export interface IPickerShift extends Document {
   endTime?: string;
   time?: string;
   duration?: string;
-  /** Calendar day the shift runs on. Absent on legacy rows — treated as "recurring/today". */
+  /** Calendar day the shift runs on. Absent on legacy rows â€” treated as "recurring/today". */
   date?: Date;
   capacity: number;
   breakDuration: number;
@@ -354,7 +378,7 @@ PickerShiftSchema.index({ status: 1, date: 1 });
 
 export const PickerShift = mongoose.models.PickerShift || mongoose.model<IPickerShift>('PickerShift', PickerShiftSchema);
 
-// ─── Picker Shift Assignment ──────────────────────────────────────────────────
+// â”€â”€â”€ Picker Shift Assignment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerShiftAssignment extends Document {
   userId: mongoose.Types.ObjectId;
@@ -390,7 +414,7 @@ PickerShiftAssignmentSchema.index(
 
 export const PickerShiftAssignment = mongoose.models.PickerShiftAssignment || mongoose.model<IPickerShiftAssignment>('PickerShiftAssignment', PickerShiftAssignmentSchema);
 
-// ─── Picker Attendance ────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerAttendance extends Document {
   warehouseKey?: string;
@@ -405,6 +429,20 @@ export interface IPickerAttendance extends Document {
   lateByMinutes: number;
   overtimeMinutes: number;
   totalWorkedMinutes: number;
+  /** Wall-clock punchOut − punchIn (includes break + handovers). */
+  totalShiftMinutes?: number;
+  /** Configured / applied start handover minutes (not productive). */
+  startHandoverMinutes?: number;
+  /** Configured / applied end handover minutes (not productive). */
+  endHandoverMinutes?: number;
+  /** Break minutes (logged or configured). */
+  breakMinutes?: number;
+  /** Productive work = totalShift − break − handovers. */
+  productiveWorkMinutes?: number;
+  actualWorkStartTime?: Date;
+  actualWorkEndTime?: Date;
+  /** True when this attendance falls on a scheduled week-off day. */
+  isWeekOffWork?: boolean;
   ordersCompleted?: number;
   regularHours?: number;
   overtimeHours?: number;
@@ -426,6 +464,14 @@ const PickerAttendanceSchema = new Schema<IPickerAttendance>(
     lateByMinutes: { type: Number, default: 0 },
     overtimeMinutes: { type: Number, default: 0 },
     totalWorkedMinutes: { type: Number, default: 0 },
+    totalShiftMinutes: { type: Number, default: 0 },
+    startHandoverMinutes: { type: Number, default: 0 },
+    endHandoverMinutes: { type: Number, default: 0 },
+    breakMinutes: { type: Number, default: 0 },
+    productiveWorkMinutes: { type: Number, default: 0 },
+    actualWorkStartTime: { type: Date },
+    actualWorkEndTime: { type: Date },
+    isWeekOffWork: { type: Boolean, default: false },
     ordersCompleted: { type: Number },
     regularHours: { type: Number },
     overtimeHours: { type: Number },
@@ -437,7 +483,7 @@ PickerAttendanceSchema.index({ warehouseKey: 1, punchIn: -1 });
 
 export const PickerAttendance = mongoose.models.PickerAttendance || mongoose.model<IPickerAttendance>('PickerAttendance', PickerAttendanceSchema);
 
-// ─── Picker Wallet ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Wallet â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerWallet extends Document {
   userId: mongoose.Types.ObjectId;
@@ -457,7 +503,7 @@ const PickerWalletSchema = new Schema<IPickerWallet>(
 
 export const PickerWallet = mongoose.models.PickerWallet || mongoose.model<IPickerWallet>('PickerWallet', PickerWalletSchema);
 
-// ─── Picker Transaction ───────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Transaction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerTransaction extends Document {
   userId: mongoose.Types.ObjectId;
@@ -479,7 +525,7 @@ PickerTransactionSchema.index({ userId: 1, createdAt: -1 });
 
 export const PickerTransaction = mongoose.models.PickerTransaction || mongoose.model<IPickerTransaction>('PickerTransaction', PickerTransactionSchema);
 
-// ─── Picker Withdrawal Request ────────────────────────────────────────────────
+// â”€â”€â”€ Picker Withdrawal Request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerWithdrawalRequest extends Document {
   userId: mongoose.Types.ObjectId;
@@ -520,7 +566,7 @@ PickerWithdrawalRequestSchema.index(
 
 export const PickerWithdrawalRequest = mongoose.models.PickerWithdrawalRequest || mongoose.model<IPickerWithdrawalRequest>('PickerWithdrawalRequest', PickerWithdrawalRequestSchema);
 
-// ─── Picker Document ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Document â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** KYC document types the rider app collects (`ObKycScreen` `DOC_LIST[].code`). */
 export const PICKER_DOCUMENT_TYPES = ['aadhar', 'pan', 'dl', 'rc', 'ins'] as const;
@@ -551,7 +597,7 @@ const PickerDocumentSchema = new Schema<IPickerDocument>(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'PickerUser', required: true, index: true },
     type: { type: String, required: true },
-    // Aadhaar and PAN use front/back; other KYC types have no side — omit the field, do not store null.
+    // Aadhaar and PAN use front/back; other KYC types have no side â€” omit the field, do not store null.
     side: { type: String, enum: ['front', 'back'] },
     url: { type: String },
     documentNumber: { type: String },
@@ -584,7 +630,7 @@ export async function ensurePickerDocumentIndexes(): Promise<void> {
   try {
     await col.dropIndex('userId_1_docType_1_side_1');
   } catch {
-    // Index already gone — fine.
+    // Index already gone â€” fine.
   }
   await col.createIndex(
     { userId: 1, type: 1, side: 1 },
@@ -592,7 +638,7 @@ export async function ensurePickerDocumentIndexes(): Promise<void> {
   ).catch(() => undefined);
 }
 
-// ─── Picker Device ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Device â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerDevice extends Document {
   deviceId: string;
@@ -629,7 +675,7 @@ const PickerDeviceSchema = new Schema<IPickerDevice>(
 
 export const PickerDevice = mongoose.models.PickerDevice || mongoose.model<IPickerDevice>('PickerDevice', PickerDeviceSchema);
 
-// ─── Picker Notification ──────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Notification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerNotification extends Document {
   userId: mongoose.Types.ObjectId;
@@ -649,7 +695,7 @@ PickerNotificationSchema.index({ userId: 1, createdAt: -1 });
 
 export const PickerNotification = mongoose.models.PickerNotification || mongoose.model<IPickerNotification>('PickerNotification', PickerNotificationSchema);
 
-// ─── Picker Bank Account ──────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Bank Account â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerBankAccount extends Document {
   userId: mongoose.Types.ObjectId;
@@ -690,7 +736,7 @@ const PickerBankAccountSchema = new Schema<IPickerBankAccount>(
 
 export const PickerBankAccount = mongoose.models.PickerBankAccount || mongoose.model<IPickerBankAccount>('PickerBankAccount', PickerBankAccountSchema);
 
-// ─── Picker Work Location ─────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Work Location â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerWorkLocation extends Document {
   warehouseKey: string;
@@ -735,7 +781,7 @@ PickerWorkLocationSchema.pre('save', function syncGeo() {
 
 export const PickerWorkLocation = mongoose.models.PickerWorkLocation || mongoose.model<IPickerWorkLocation>('PickerWorkLocation', PickerWorkLocationSchema);
 
-// ─── Picker SLA Config ────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker SLA Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerSlaConfig extends Document {
   warehouseKey: string;
@@ -755,7 +801,7 @@ const PickerSlaConfigSchema = new Schema<IPickerSlaConfig>(
 
 export const PickerSlaConfig = mongoose.models.PickerSlaConfig || mongoose.model<IPickerSlaConfig>('PickerSlaConfig', PickerSlaConfigSchema);
 
-// ─── Picker Action Log ────────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Action Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerActionLog extends Document {
   userId: mongoose.Types.ObjectId;
@@ -777,7 +823,7 @@ PickerActionLogSchema.index({ createdAt: -1 });
 
 export const PickerActionLog = mongoose.models.PickerActionLog || mongoose.model<IPickerActionLog>('PickerActionLog', PickerActionLogSchema);
 
-// ─── Picker Training Video ─────────────────────────────────────────────────────
+// â”€â”€â”€ Picker Training Video â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface IPickerTrainingVideo extends Document {
   videoId: string;
@@ -800,7 +846,7 @@ const PickerTrainingVideoSchema = new Schema<IPickerTrainingVideo>(
 
 export const PickerTrainingVideo = mongoose.models.PickerTrainingVideo || mongoose.model<IPickerTrainingVideo>('PickerTrainingVideo', PickerTrainingVideoSchema);
 
-// ─── Picker Issue (device / app / shift reports) ──────────────────────────────
+// â”€â”€â”€ Picker Issue (device / app / shift reports) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const PICKER_ISSUE_TYPES = ['device', 'app', 'shift', 'payout', 'other'] as const;
 export type PickerIssueType = (typeof PICKER_ISSUE_TYPES)[number];

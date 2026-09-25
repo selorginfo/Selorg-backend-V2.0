@@ -4,7 +4,7 @@ import {
   PickerUser, PickerDocument, PickerWorkLocation, PickerShift, PickerShiftAssignment,
   PickerAttendance, PickerWallet, PickerTransaction, PickerWithdrawalRequest,
   PickerBankAccount, PickerDevice, PickerNotification, PickerTrainingVideo,
-  PickerIssue, pickerDisplayRole,
+  PickerIssue, pickerDisplayRole, effectiveWorkforceRole,
 } from './picker.models';
 import { PickerOnboardingApplication } from './picker.rider.models';
 import { HHDOrder } from '../hhd/hhd.models';
@@ -12,6 +12,17 @@ import { Order } from '../orders/order.model';
 import { DEFAULT_HUB_KEY } from '../orders/fulfillment.service';
 import { AppError } from '../../utils/AppError';
 import { pickerConfig } from './picker.config';
+import {
+  resolveSalaryConfig,
+  computeShiftBreakdown,
+  computeMonthlyPayroll,
+  dailySalary as calcDailySalary,
+  otHourlyRate as calcOtHourlyRate,
+  otAmountFromMinutes,
+  hubYearMonth,
+  isWeekOffDateKey,
+  roundRate,
+} from './picker.salary';
 import { sendOtpSms } from '../../services/sms.service';
 import { storePickerUpload } from './picker.upload.service';
 import * as shiftService from './picker.shift.service';
@@ -145,10 +156,28 @@ export function readCoords(body?: Record<string, unknown> | null): { latitude: n
 
 async function resolveHub(warehouseKey?: string | null) {
   if (!warehouseKey) return null;
-  return PickerWorkLocation.findOne({ warehouseKey }).lean() as Promise<{
+  const { ensureOperationalHubs, ADYAR_HUB, resolveWarehouseKey } = await import('./picker.hub');
+  await ensureOperationalHubs();
+  const key = (await resolveWarehouseKey(warehouseKey, { fallbackToDefault: true })) || warehouseKey;
+  const hub = await PickerWorkLocation.findOne({ warehouseKey: key }).lean() as {
     warehouseKey: string; name: string; address?: string;
     coordinates?: { latitude?: number; longitude?: number }; geofenceRadius?: number;
-  } | null>;
+  } | null;
+  if (!hub) return null;
+  // Guarantee Adyar has usable GPS even if a partial document slipped through.
+  if (
+    hub.warehouseKey === ADYAR_HUB.warehouseKey &&
+    !hasCoords(hub.coordinates?.latitude, hub.coordinates?.longitude)
+  ) {
+    return {
+      ...hub,
+      name: hub.name || ADYAR_HUB.name,
+      address: hub.address || ADYAR_HUB.address,
+      coordinates: ADYAR_HUB.coordinates,
+      geofenceRadius: hub.geofenceRadius ?? ADYAR_HUB.geofenceRadius,
+    };
+  }
+  return hub;
 }
 
 async function getOrCreateWallet(userId: string) {
@@ -171,13 +200,8 @@ function nextPayDate(from = new Date()): Date {
 function scheduledMinutes(shift?: { startTime?: string; endTime?: string } | null): number {
   const start = parseHhMmToMinutes(shift?.startTime);
   const end = parseHhMmToMinutes(shift?.endTime);
-  if (start == null || end == null) return pickerConfig.defaultShiftMinutes;
+  if (start == null || end == null) return pickerConfig.standardShiftMinutes || pickerConfig.defaultShiftMinutes;
   return end > start ? end - start : end + 24 * 60 - start;
-}
-
-function hourlyRate(shift?: { basePay?: number } | null, minutes?: number): number {
-  if (shift?.basePay && minutes && minutes > 0) return shift.basePay / (minutes / 60);
-  return pickerConfig.defaultHourlyRate;
 }
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
@@ -185,6 +209,9 @@ function hourlyRate(shift?: { basePay?: number } | null, minutes?: number): numb
 export async function getAppProfile(pickerId: string) {
   const user = await PickerUser.findById(pickerId).lean() as any;
   if (!user) throw AppError.notFound('User');
+  if (effectiveWorkforceRole(user) !== 'picker') {
+    throw AppError.forbidden('Rider accounts cannot access picker profile.', 'ROLE_MISMATCH');
+  }
   const assignment = await resolveTodaysAssignment(pickerId).catch(() => null);
   const warehouseKey =
     (assignment as any)?.warehouseKey ||
@@ -200,7 +227,7 @@ export async function getAppProfile(pickerId: string) {
     memberSince: user.createdAt ? memberSinceDisplay(new Date(user.createdAt)) : null,
     hub: hub?.name || null,
     role: pickerDisplayRole(user),
-    workforceRole: user.workforceRole === 'picker' || user.workforceRole === 'rider' ? user.workforceRole : null,
+    workforceRole: effectiveWorkforceRole(user),
     photoUri: user.photoUri || null,
     dob: dobString(user.dob),
     gender: genderDisplay(user.gender),
@@ -905,7 +932,13 @@ export async function getShiftReadiness(
   if (coords && hub && hasCoords(hub.coordinates?.latitude, hub.coordinates?.longitude)) {
     distanceM = Math.round(haversineKm(coords.latitude, coords.longitude, hub.coordinates!.latitude!, hub.coordinates!.longitude!) * 1000);
     onSite = distanceM <= geofenceM;
-    if (!onSite) blockers.push(`You are ${distanceM} m from ${hub.name}. Move within ${geofenceM} m.`);
+    if (!onSite) {
+      blockers.push(
+        `You are ${distanceM} m from ${hub.name}. Move within ${geofenceM} m of the Dark Store to start your shift.`,
+      );
+    }
+  } else if (coords && hub && !hasCoords(hub.coordinates?.latitude, hub.coordinates?.longitude)) {
+    blockers.push(`Hub location for ${hub.name} is not configured. Contact your manager.`);
   }
 
   return {
@@ -915,6 +948,8 @@ export async function getShiftReadiness(
     distanceM,
     geofenceM,
     hub: hub?.name || null,
+    hubLatitude: hub?.coordinates?.latitude ?? null,
+    hubLongitude: hub?.coordinates?.longitude ?? null,
     blockers,
   };
 }
@@ -955,22 +990,29 @@ function computeLateness(shift?: { startTime?: string } | null): number {
   return Math.max(0, hubMinutesNow() - start);
 }
 
-function computeOvertime(workedMinutes: number, shift?: { startTime?: string; endTime?: string } | null): number {
-  const scheduled = scheduledMinutes(shift);
-  return Math.max(0, workedMinutes - scheduled);
-}
+/** Credit OT (and week-off work) only — base monthly salary is paid via payroll, not per punch. */
+async function creditShiftEarnings(pickerId: string, attendance: any) {
+  const otMinutes = Math.max(0, attendance.overtimeMinutes || 0);
+  if (otMinutes <= 0) return;
 
-async function creditShiftEarnings(pickerId: string, attendance: any, shift: any) {
-  const worked = attendance.totalWorkedMinutes || 0;
-  if (worked <= 0) return;
-  const minutes = scheduledMinutes(shift);
-  const rate = hourlyRate(shift, minutes);
-  const otHours = (attendance.overtimeMinutes || 0) / 60;
-  const regularHours = Math.max(0, worked - (attendance.overtimeMinutes || 0)) / 60;
-  const amount = Math.round(regularHours * rate + otHours * rate * pickerConfig.overtimeMultiplier);
-  if (amount > 0) {
-    await pickerService.creditEarnings(pickerId, amount, `Shift earnings ${hubDateKey()}`, String(attendance._id));
-  }
+  const ref = `ot:${String(attendance._id)}`;
+  const existing = await PickerTransaction.findOne({
+    userId: oid(pickerId),
+    referenceId: ref,
+    type: 'credit',
+  }).lean();
+  if (existing) return;
+
+  const cfg = await resolveSalaryConfig();
+  const { year, monthIndex0 } = hubYearMonth(new Date(attendance.punchIn));
+  const daily = calcDailySalary(cfg, year, monthIndex0);
+  const amount = otAmountFromMinutes(cfg, daily, otMinutes);
+  if (amount <= 0) return;
+
+  const label = attendance.isWeekOffWork
+    ? `Week-off work OT ${hubDateKey(new Date(attendance.punchIn))}`
+    : `Overtime ${hubDateKey(new Date(attendance.punchIn))}`;
+  await pickerService.creditEarnings(pickerId, amount, label, ref);
 }
 
 export async function startAppShift(pickerId: string, shiftId?: string, body?: Record<string, unknown>) {
@@ -1031,18 +1073,42 @@ async function punchOutInternal(pickerId: string, location?: { latitude: number;
   if (!attendance) throw Object.assign(new Error('Not punched in'), { statusCode: 400 });
   attendance.punchOut = new Date();
   attendance.locationOut = location;
-  const worked = Math.floor((attendance.punchOut.getTime() - attendance.punchIn.getTime()) / 60000);
-  const breakTime = attendance.breaks.reduce((s: number, b: any) => s + (b.endTime ? Math.floor((new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000) : 0), 0);
-  attendance.totalWorkedMinutes = Math.max(0, worked - breakTime);
+
+  const cfg = await resolveSalaryConfig();
+  const punchIn = new Date(attendance.punchIn);
+  const { year, monthIndex0 } = hubYearMonth(punchIn);
+  const dayKey = hubDateKey(punchIn);
+  const weekOff = isWeekOffDateKey(dayKey, cfg, year, monthIndex0);
+
+  const breakdown = computeShiftBreakdown({
+    punchIn,
+    punchOut: attendance.punchOut,
+    breaks: attendance.breaks as Array<{ startTime: Date; endTime?: Date }>,
+    cfg,
+    isWeekOffDay: weekOff,
+  });
+
+  attendance.totalShiftMinutes = breakdown.totalShiftMinutes;
+  attendance.startHandoverMinutes = breakdown.startHandoverMinutes;
+  attendance.endHandoverMinutes = breakdown.endHandoverMinutes;
+  attendance.breakMinutes = breakdown.breakMinutes;
+  attendance.productiveWorkMinutes = breakdown.productiveWorkMinutes;
+  attendance.actualWorkStartTime = breakdown.actualWorkStartTime;
+  attendance.actualWorkEndTime = breakdown.actualWorkEndTime || undefined;
+  attendance.isWeekOffWork = breakdown.isWeekOffWork;
+  // Keep totalWorkedMinutes as productive work for legacy consumers
+  attendance.totalWorkedMinutes = breakdown.productiveWorkMinutes;
+  attendance.overtimeMinutes = breakdown.overtimeMinutes;
+  attendance.overtimeHours = Math.round((breakdown.overtimeMinutes / 60) * 10) / 10;
+  const regularMins = Math.max(0, breakdown.totalShiftMinutes - breakdown.overtimeMinutes);
+  attendance.regularHours = Math.round((regularMins / 60) * 10) / 10;
+
   const shift = attendance.shiftId ? await PickerShift.findById(attendance.shiftId).lean() as any : null;
   if (!attendance.lateByMinutes) attendance.lateByMinutes = computeLateness(shift);
-  attendance.overtimeMinutes = computeOvertime(attendance.totalWorkedMinutes, shift);
-  attendance.overtimeHours = Math.round((attendance.overtimeMinutes / 60) * 10) / 10;
-  attendance.regularHours = Math.round(((attendance.totalWorkedMinutes - attendance.overtimeMinutes) / 60) * 10) / 10;
-  const halfDayThreshold = scheduledMinutes(shift) * 0.5;
-  attendance.status = attendance.totalWorkedMinutes < halfDayThreshold ? 'half-day' : 'present';
+  const halfDayThreshold = cfg.standardShiftMinutes * 0.5;
+  attendance.status = breakdown.totalShiftMinutes < halfDayThreshold ? 'half-day' : 'present';
   await attendance.save();
-  await creditShiftEarnings(pickerId, attendance, shift);
+  await creditShiftEarnings(pickerId, attendance);
   return attendance;
 }
 
@@ -1153,8 +1219,11 @@ export async function getAttendanceSummary(pickerId: string, month?: string) {
   }
 
   const otMinutes = records.reduce((s, r) => s + (r.overtimeMinutes || 0), 0);
-  const rate = hourlyRate(shift, scheduled);
-  const otEarnings = Math.round((otMinutes / 60) * rate * pickerConfig.overtimeMultiplier);
+  const salaryCfg = await resolveSalaryConfig();
+  const ym = hubYearMonth(from);
+  const daily = calcDailySalary(salaryCfg, ym.year, ym.monthIndex0);
+  const otRate = calcOtHourlyRate(salaryCfg, daily);
+  const otEarnings = otAmountFromMinutes(salaryCfg, daily, otMinutes);
 
   const weeks: { week: string; range: string; hrs: string; amt: string }[] = [];
   const start = new Date(from);
@@ -1167,7 +1236,7 @@ export async function getAttendanceSummary(pickerId: string, month?: string) {
       return t >= wFrom.getTime() && t <= wTo.getTime();
     });
     const mins = slice.reduce((s, r) => s + (r.overtimeMinutes || 0), 0);
-    const amt = Math.round((mins / 60) * rate * pickerConfig.overtimeMultiplier);
+    const amt = otAmountFromMinutes(salaryCfg, daily, mins);
     const fromShifted = new Date(wFrom.getTime() + 330 * 60000);
     const toShifted = new Date(wTo.getTime() + 330 * 60000);
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1214,7 +1283,7 @@ export async function getAttendanceSummary(pickerId: string, month?: string) {
     ],
     ot: {
       totalHrs: `${Math.round((otMinutes / 60) * 10) / 10} hrs`,
-      rate: OT_RATE_LABEL,
+      rate: `${rupees(otRate)}/hr (${OT_RATE_LABEL})`,
       totalEarnings: rupees(otEarnings),
       weeks,
     },
@@ -1232,6 +1301,107 @@ export async function getAttendanceSummary(pickerId: string, month?: string) {
 export async function getAttendanceStats(pickerId: string, month?: string) {
   const summary = await getAttendanceSummary(pickerId, month);
   return summary.stats;
+}
+
+/**
+ * Monthly salary breakdown for the Picker App:
+ * Monthly Salary − Leave Deduction + OT Earnings (+ week-off work OT).
+ */
+export async function getMonthlySalarySummary(pickerId: string, month?: string) {
+  const { from, to, label } = monthWindow(month);
+  const [records, user, cfg] = await Promise.all([
+    PickerAttendance.find({
+      userId: oid(pickerId),
+      punchIn: { $gte: from, $lte: to },
+    }).lean() as Promise<any[]>,
+    PickerUser.findById(pickerId).select('employment.joiningDate createdAt').lean() as Promise<any>,
+    resolveSalaryConfig(),
+  ]);
+
+  const ym = hubYearMonth(from);
+  const joiningDate = user?.employment?.joiningDate
+    ? new Date(user.employment.joiningDate)
+    : user?.createdAt
+      ? new Date(user.createdAt)
+      : null;
+
+  const payroll = computeMonthlyPayroll({
+    cfg,
+    year: ym.year,
+    monthIndex0: ym.monthIndex0,
+    records,
+    joiningDate,
+    asOf: new Date(),
+  });
+
+  const formatHours = (mins: number) => {
+    const h = roundRate(Math.max(0, mins) / 60);
+    return `${h}`.replace(/\.0$/, '') + ' hours';
+  };
+
+  return {
+    month: label,
+    monthKey: `${ym.year}-${String(ym.monthIndex0 + 1).padStart(2, '0')}`,
+    currency: 'INR',
+    config: {
+      monthlySalary: cfg.monthlySalary,
+      standardShiftHours: cfg.standardShiftMinutes / 60,
+      breakMinutes: cfg.breakMinutes,
+      startHandoverMinutes: cfg.startHandoverMinutes,
+      endHandoverMinutes: cfg.endHandoverMinutes,
+      productiveWorkMinutes: cfg.productiveWorkMinutes,
+      overtimeMultiplier: cfg.overtimeMultiplier,
+      weekOffAllowance: cfg.weekOffAllowance,
+      weekOffWeekday: cfg.weekOffWeekday,
+      monthlyWorkingDays: payroll.monthlyWorkingDays,
+    },
+    regular: {
+      monthlySalary: payroll.monthlySalary,
+      monthlySalaryDisplay: rupees(payroll.monthlySalary),
+      dailySalary: payroll.dailySalary,
+      dailySalaryDisplay: rupees(payroll.dailySalary),
+      workingDays: payroll.workingDays,
+      weekOffs: payroll.weekOffsPaid,
+      weekOffsScheduled: payroll.weekOffsScheduled,
+      weekOffsWorked: payroll.weekOffsWorked,
+      paidDays: payroll.paidDays,
+      unpaidLeave: payroll.unpaidLeaveDays,
+      leaveDeduction: payroll.leaveDeduction,
+      leaveDeductionDisplay: rupees(payroll.leaveDeduction),
+    },
+    overtime: {
+      otHours: payroll.otHours,
+      otHoursDisplay: formatHours(payroll.otMinutes),
+      otRate: payroll.otHourlyRate,
+      otRateDisplay: `${rupees(payroll.otHourlyRate)}/hour`,
+      otEarnings: payroll.otEarnings,
+      otEarningsDisplay: rupees(payroll.otEarnings),
+      weekOffWorkHours: roundRate(payroll.weekOffWorkMinutes / 60),
+      weekOffWorkEarnings: payroll.weekOffWorkEarnings,
+      weekOffWorkEarningsDisplay: rupees(payroll.weekOffWorkEarnings),
+    },
+    finalSalary: payroll.finalSalary,
+    finalSalaryDisplay: rupees(payroll.finalSalary),
+    breakdown: {
+      monthlySalary: rupees(payroll.monthlySalary),
+      workingDays: String(payroll.workingDays),
+      weekOffs: String(payroll.weekOffsPaid),
+      paidDays: String(payroll.paidDays),
+      unpaidLeave: `${payroll.unpaidLeaveDays} days`,
+      leaveDeduction: rupees(payroll.leaveDeduction),
+      otHours: formatHours(payroll.otMinutes),
+      otRate: `${rupees(payroll.otHourlyRate)}/hour`,
+      otEarnings: rupees(payroll.otEarnings),
+      weekOffWorkEarnings: rupees(payroll.weekOffWorkEarnings),
+      finalSalary: rupees(payroll.finalSalary),
+    },
+    weekOffDates: payroll.paidWeekOffDates,
+    formula: {
+      dailySalary: `Monthly Salary ÷ ${payroll.monthlyWorkingDays} working days`,
+      otHourlyRate: `(Daily Salary ÷ ${cfg.standardShiftMinutes / 60}) × ${cfg.overtimeMultiplier}`,
+      finalSalary: 'Monthly Salary − Leave Deduction + OT Earnings + Week-off Work Earnings',
+    },
+  };
 }
 
 // ─── Wallet / bank ────────────────────────────────────────────────────────────
@@ -1695,7 +1865,8 @@ export async function getHomeSummary(
     settle('assignment', resolveTodaysAssignment(pickerId), null),
     settle('unread', PickerNotification.countDocuments({ userId: oid(pickerId), read: false }), 0),
     settle('readiness', getShiftReadiness(pickerId, coords, accuracyM), {
-      ready: false, accuracyM: 0, onSite: false, distanceM: null, geofenceM: 0, hub: null, blockers: [],
+      ready: false, accuracyM: 0, onSite: false, distanceM: null, geofenceM: 0,
+      hub: null, hubLatitude: null, hubLongitude: null, blockers: [],
     }),
     settle('performance', getPerformanceView(pickerId), emptyPerf),
     settle('hub', resolveHub(user.currentLocationId), null),
@@ -1766,6 +1937,10 @@ export async function getHomeSummary(
       address: (hub as any)?.address || null,
       accuracy: accuracyM != null ? `±${Math.round(accuracyM)} m` : null,
       onSite: Boolean(readiness?.onSite),
+      distanceM: readiness?.distanceM ?? null,
+      geofenceM: readiness?.geofenceM ?? ((hub as any)?.geofenceRadius || pickerConfig.geofenceMeters),
+      latitude: (hub as any)?.coordinates?.latitude ?? readiness?.hubLatitude ?? null,
+      longitude: (hub as any)?.coordinates?.longitude ?? readiness?.hubLongitude ?? null,
     },
     shift: {
       window: timeRangeDisplay(shift?.startTime, shift?.endTime, shift?.time) || null,

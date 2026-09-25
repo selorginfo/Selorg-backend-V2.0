@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import {
   PickerUser, PickerDocument, PickerWorkLocation, PickerTrainingVideo,
   PICKER_DOCUMENT_TYPES, PICKER_TWO_SIDED_DOCUMENT_TYPES, deriveDeliveryMode,
+  effectiveWorkforceRole,
   type PickerDocumentType,
 } from './picker.models';
 import {
@@ -67,7 +68,11 @@ export async function isKycVerified(pickerId: string): Promise<boolean> {
   return PICKER_DOCUMENT_TYPES.every((type) => {
     const required = PICKER_TWO_SIDED_DOCUMENT_TYPES.includes(type) ? ['front', 'back'] : [null];
     return required.every((side) =>
-      docs.some((d) => d.type === type && d.status === 'approved' && (side === null || d.side === side)),
+      docs.some((d) => {
+        if (d.type !== type || d.status !== 'approved') return false;
+        if (side === null) return true;
+        return (d.side || 'front') === side;
+      }),
     );
   });
 }
@@ -91,6 +96,9 @@ function averageRating(sum: number, count: number): number | null {
 export async function getRiderProfile(pickerId: string): Promise<RiderProfileDto> {
   const user = (await PickerUser.findById(pickerId).lean()) as any;
   if (!user) throw AppError.notFound('Picker');
+  if (effectiveWorkforceRole(user) !== 'rider') {
+    throw AppError.forbidden('Picker accounts cannot access rider profile.', 'ROLE_MISMATCH');
+  }
 
   const [hub, floatCash, kycVerified] = await Promise.all([
     resolveHub(user.currentLocationId),
@@ -296,16 +304,22 @@ export async function listHubs(params: {
 
   if (!hasOrigin) return hubs.sort((a, b) => a.name.localeCompare(b.name));
 
-  const radius = params.radiusKm ?? 25;
-  return hubs
-    // Hubs without coordinates cannot be excluded by radius without hiding them
-    // entirely, so they are kept and sorted last.
-    .filter((h) => h.distanceKm == null || h.distanceKm <= radius)
-    .sort((a, b) => {
-      if (a.distanceKm == null) return 1;
-      if (b.distanceKm == null) return -1;
-      return a.distanceKm - b.distanceKm;
-    });
+  const sorted = hubs.sort((a, b) => {
+    if (a.distanceKm == null) return 1;
+    if (b.distanceKm == null) return -1;
+    return a.distanceKm - b.distanceKm;
+  });
+
+  // Only apply a radius when the caller asks for one (e.g. nearby-stores).
+  // Onboarding lists all active hubs sorted by distance so a rider whose GPS
+  // is far from seeded darkstores still sees every option.
+  if (params.radiusKm == null || !Number.isFinite(params.radiusKm)) {
+    return sorted;
+  }
+
+  const within = sorted.filter((h) => h.distanceKm == null || h.distanceKm <= params.radiusKm!);
+  // Never return an empty list when hubs exist — fall back to the full sorted set.
+  return within.length > 0 ? within : sorted;
 }
 
 export async function getHubById(hubId: string): Promise<HubDto> {
@@ -399,8 +413,16 @@ export async function uploadKycDocument(
   const twoSided = PICKER_TWO_SIDED_DOCUMENT_TYPES.includes(input.type);
   let side: 'front' | 'back' = twoSided ? (input.side || 'front') : 'front';
   if (twoSided && !input.side) {
-    const hasFront = await PickerDocument.exists({ userId, type: input.type, side: 'front', supersededBy: null });
-    side = hasFront ? 'back' : 'front';
+    const existingSides = await PickerDocument.find({
+      userId,
+      type: input.type,
+      supersededBy: null,
+    })
+      .select('side')
+      .lean();
+    const hasFront = existingSides.some((d) => (d.side || 'front') === 'front');
+    const hasBack = existingSides.some((d) => d.side === 'back');
+    side = hasFront && !hasBack ? 'back' : 'front';
   }
 
   const existing = twoSided
@@ -544,8 +566,15 @@ async function evaluateSteps(pickerId: string): Promise<{
     if (rejected) return { type, status: 'rejected' as const, rejectionReason: rejected.rejectionReason || null };
 
     // Aadhaar and PAN need both sides present before they count as submitted.
+    // Treat a missing/null side as "front" for older rows that omitted the field.
     const sidesNeeded = PICKER_TWO_SIDED_DOCUMENT_TYPES.includes(type) ? ['front', 'back'] : [null];
-    const allSidesPresent = sidesNeeded.every((side) => rows.some((r) => (side === null ? true : r.side === side)));
+    const allSidesPresent = sidesNeeded.every((side) =>
+      rows.some((r) => {
+        if (side === null) return true;
+        const rowSide = r.side || 'front';
+        return rowSide === side;
+      }),
+    );
     if (!allSidesPresent) return { type, status: 'missing' as const, rejectionReason: null };
 
     const allApproved = rows.every((r) => r.status === 'approved');
@@ -597,6 +626,44 @@ async function evaluateSteps(pickerId: string): Promise<{
   return { steps, documents, training: { completed: Boolean(user.trainingCompleted), progressPercent }, kitAcknowledged, user };
 }
 
+/**
+ * TEMP DEV/TEST ONLY — remove after testing.
+ * Auto-approves this application id so QA can skip the admin review queue.
+ * Never applied in production.
+ */
+const DEV_AUTO_APPROVE_APPLICATION_IDS = new Set(['SL-RA-2002']);
+
+function shouldDevAutoApprove(applicationId: string | null | undefined): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
+  return Boolean(applicationId && DEV_AUTO_APPROVE_APPLICATION_IDS.has(String(applicationId)));
+}
+
+async function approveRiderAccountForDev(pickerId: string): Promise<void> {
+  const now = new Date();
+  const userId = new mongoose.Types.ObjectId(pickerId);
+  await Promise.all([
+    PickerUser.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          status: 'ACTIVE',
+          approvedAt: now,
+          faceVerificationStatus: 'verified',
+          'onboarding.submittedForReviewAt': now,
+        },
+      },
+    ),
+    PickerDocument.updateMany(
+      { userId, supersededBy: null, status: 'pending' },
+      { $set: { status: 'approved', reviewedAt: now } },
+    ),
+    PickerOnboardingApplication.updateOne(
+      { pickerId: userId },
+      { $set: { status: 'approved', reviewedAt: now } },
+    ),
+  ]);
+}
+
 function resolveOnboardingStatus(accountStatus: string, applicationStatus: string | null, anyStepDone: boolean): OnboardingStatus {
   switch (String(accountStatus).toUpperCase()) {
     case 'ACTIVE':
@@ -612,10 +679,23 @@ function resolveOnboardingStatus(accountStatus: string, applicationStatus: strin
 }
 
 export async function getOnboardingState(pickerId: string): Promise<OnboardingStateDto> {
-  const [{ steps, documents, training, kitAcknowledged, user }, application] = await Promise.all([
+  let [{ steps, documents, training, kitAcknowledged, user }, application] = await Promise.all([
     evaluateSteps(pickerId),
     PickerOnboardingApplication.findOne({ pickerId: new mongoose.Types.ObjectId(pickerId) }).lean() as Promise<any>,
   ]);
+
+  // TEMP DEV/TEST: auto-approve SL-RA-2002 if still waiting on admin review.
+  if (
+    shouldDevAutoApprove(application?.applicationId) &&
+    String(user.status || '').toUpperCase() === 'PENDING' &&
+    application?.status === 'under_review'
+  ) {
+    await approveRiderAccountForDev(pickerId);
+    [{ steps, documents, training, kitAcknowledged, user }, application] = await Promise.all([
+      evaluateSteps(pickerId),
+      PickerOnboardingApplication.findOne({ pickerId: new mongoose.Types.ObjectId(pickerId) }).lean() as Promise<any>,
+    ]);
+  }
 
   const hub = await resolveHub(application?.hubKey || user.currentLocationId);
   const anyStepDone = steps.some((s) => s.completed);
@@ -649,7 +729,12 @@ async function generateApplicationId(): Promise<string> {
 export async function submitOnboarding(
   pickerId: string,
   input: { acceptedTermsVersion?: string; acceptedPrivacyVersion?: string },
-): Promise<{ applicationId: string; status: 'under_review'; submittedAt: string; estimatedReviewHours: number }> {
+): Promise<{
+  applicationId: string;
+  status: 'under_review' | 'approved';
+  submittedAt: string;
+  estimatedReviewHours: number;
+}> {
   const userId = new mongoose.Types.ObjectId(pickerId);
   const { steps, user } = await evaluateSteps(pickerId);
 
@@ -660,6 +745,9 @@ export async function submitOnboarding(
   const existing = await PickerOnboardingApplication.findOne({ pickerId: userId });
   if (existing && existing.status === 'under_review') {
     throw AppError.conflict('Your application is already under review.', 'ALREADY_SUBMITTED');
+  }
+  if (existing && existing.status === 'approved') {
+    throw AppError.conflict('Your account is already approved.', 'ALREADY_APPROVED');
   }
 
   const incomplete = steps.filter((s) => !s.completed);
@@ -713,12 +801,25 @@ export async function submitOnboarding(
       $set: {
         ...(input.acceptedTermsVersion ? { acceptedTermsVersion: input.acceptedTermsVersion } : {}),
         ...(input.acceptedPrivacyVersion ? { acceptedPrivacyVersion: input.acceptedPrivacyVersion } : {}),
+        'onboarding.submittedForReviewAt': submittedAt,
       },
     },
   );
 
+  const applicationId = String(application.applicationId);
+  if (shouldDevAutoApprove(applicationId)) {
+    // TEMP: remove DEV_AUTO_APPROVE_APPLICATION_IDS after testing.
+    await approveRiderAccountForDev(pickerId);
+    return {
+      applicationId,
+      status: 'approved',
+      submittedAt: submittedAt.toISOString(),
+      estimatedReviewHours: 0,
+    };
+  }
+
   return {
-    applicationId: application.applicationId,
+    applicationId,
     status: 'under_review',
     submittedAt: submittedAt.toISOString(),
     estimatedReviewHours: pickerConfig.estimatedReviewHours,
