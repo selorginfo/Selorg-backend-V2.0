@@ -1,7 +1,16 @@
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
-import { PickerUser, PickerOtp, pickerDisplayRole, parseWorkforceRole, type WorkforceRole } from './picker.models';
+import {
+  PickerUser,
+  PickerOtp,
+  pickerDisplayRole,
+  parseWorkforceRole,
+  effectiveWorkforceRole,
+  VALID_PICKER_USER_STATUSES,
+  type WorkforceRole,
+  type PickerUserStatus,
+} from './picker.models';
 import { PickerOnboardingApplication } from './picker.rider.models';
 import { generateOtp } from '../../utils/auth';
 import {
@@ -9,25 +18,22 @@ import {
   deliverOtpToEmail,
   deliverOtpToPhone,
 } from '../../services/otpDelivery.service';
+import { withOtpMessageTemplate } from '../../services/sms.service';
 import { pickerConfig, toApiAccountStatus } from './picker.config';
 import { logger } from '../../utils/logger';
 import { appConfig } from '../../config/env';
 
 /**
- * Picker (rider) authentication: OTP issue/verify over SMS, WhatsApp and email,
- * plus session lifecycle (logout, refresh).
- *
- * Delivery uses the same shared SMS/email providers as Customer auth
- * (`otpDelivery.service` → `sms.service` / `email.service`). Providers are
- * always called; API success is returned only when the provider accepts the message.
- *
- * Tokens carry `aud: 'picker'` so a rider token can never be replayed against the
- * admin or customer middlewares, and a `sid` claim that must match
- * `PickerUser.sessionToken` — which is what makes logout and refresh able to
- * invalidate every outstanding token for a rider.
+ * Workforce authentication (Picker + Rider apps).
+ * Login: checkAccount → LOGIN OTP → status gates → session.
+ * Register: checkRegistration (phone & email independently) → REGISTRATION OTP
+ *   → create PickerUser(PENDING) + draft onboarding application → session.
+ * Roles are isolated via workforceRole, client header, role-scoped OTP keys,
+ * and role-specific JWT audiences. under_review belongs on
+ * PickerOnboardingApplication only — never PickerUser.status.
  */
 
-function resolvePickerJwtSecret(): string {
+function resolveJwtSecret(): string {
   const secret = process.env.PICKER_JWT_SECRET || process.env.JWT_SECRET;
   if (secret) return secret;
   if (process.env.NODE_ENV === 'production') {
@@ -35,28 +41,86 @@ function resolvePickerJwtSecret(): string {
   }
   return 'picker-app-secret-change-in-production';
 }
-const JWT_SECRET = resolvePickerJwtSecret();
-const OTP_EXPIRE_MINUTES = parseInt(process.env.OTP_EXPIRE_MINUTES || '5', 10);
-const IS_NON_PRODUCTION = process.env.NODE_ENV !== 'production';
-const RIDER_APP_NAME = process.env.RIDER_APP_NAME || 'Selorg Rider';
 
-function otpDevFallback(): boolean {
-  return appConfig.otp.devMode || !appConfig.isProduction;
-}
-
-function riderEmailFrom(): string | undefined {
-  return (
-    process.env.RIDER_EMAIL_FROM ||
-    process.env.PICKER_EMAIL_FROM ||
-    process.env.EMAIL_FROM ||
-    undefined
-  );
-}
-
+export const PICKER_JWT_SECRET = resolveJwtSecret();
+/** Legacy audience shared by older tokens; new tokens use role-specific audiences. */
 export const PICKER_TOKEN_AUDIENCE = 'picker';
-const TOKEN_TTL_DAYS = 7;
+export const PICKER_APP_TOKEN_AUDIENCE = 'selorg-picker';
+export const RIDER_APP_TOKEN_AUDIENCE = 'selorg-rider';
 
-export type PickerNextScreen = 'main' | 'onboarding' | 'pending_review' | 'rejected' | 'suspended';
+export function workforceTokenAudience(role?: WorkforceRole | string | null): string {
+  const parsed = parseWorkforceRole(role);
+  if (parsed === 'picker') return PICKER_APP_TOKEN_AUDIENCE;
+  if (parsed === 'rider') return RIDER_APP_TOKEN_AUDIENCE;
+  return PICKER_TOKEN_AUDIENCE;
+}
+
+export function isAllowedWorkforceTokenAudience(
+  audiences: string[],
+  accountRole: WorkforceRole,
+): boolean {
+  if (audiences.length === 0) return true; // legacy tokens without aud
+  const allowed = new Set<string>([PICKER_TOKEN_AUDIENCE, workforceTokenAudience(accountRole)]);
+  return audiences.some((a) => allowed.has(a));
+}
+
+const OTP_EXPIRE_MINUTES = parseInt(process.env.OTP_EXPIRE_MINUTES || '5', 10);
+const TOKEN_TTL_DAYS = 7;
+const IS_NON_PRODUCTION = process.env.NODE_ENV !== 'production';
+const VALID_STATUS_SET = new Set<string>(VALID_PICKER_USER_STATUSES as readonly string[]);
+
+function resolveAppName(role?: WorkforceRole | null): string {
+  if (role === 'picker') return process.env.PICKER_APP_NAME || 'Selorg Picker';
+  return process.env.RIDER_APP_NAME || 'Selorg Rider';
+}
+
+function resolveEmailFrom(role?: WorkforceRole | null): string | undefined {
+  if (role === 'picker') {
+    return process.env.PICKER_EMAIL_FROM || process.env.EMAIL_FROM || undefined;
+  }
+  return process.env.RIDER_EMAIL_FROM || process.env.EMAIL_FROM || undefined;
+}
+
+function resolvePhoneOtpTemplate(role: WorkforceRole, channel: string): string | null {
+  // Indian DLT gateways (SpearUC via SMS_VENDOR_URL) reject any text that does not
+  // match the registered template exactly. Brand copy in PICKER_/RIDER_OTP_SMS_MESSAGE
+  // must not override SMS_MESSAGE_TEMPLATE for SMS.
+  if (channel === 'sms' && (process.env.SMS_VENDOR_URL || '').trim()) {
+    return process.env.SMS_MESSAGE_TEMPLATE || null;
+  }
+  if (role === 'picker') {
+    if (channel === 'whatsapp') {
+      return process.env.PICKER_OTP_WHATSAPP_MESSAGE || process.env.PICKER_OTP_SMS_MESSAGE || null;
+    }
+    return process.env.PICKER_OTP_SMS_MESSAGE || null;
+  }
+  if (channel === 'whatsapp') {
+    return process.env.RIDER_OTP_WHATSAPP_MESSAGE || process.env.RIDER_OTP_SMS_MESSAGE || null;
+  }
+  return process.env.RIDER_OTP_SMS_MESSAGE || null;
+}
+
+function requireClientRole(role?: WorkforceRole): PickerAuthResult | null {
+  if (role) return null;
+  return {
+    success: false,
+    message: 'Client identity required. Use the Picker or Rider app to continue.',
+    errorCode: 'CLIENT_REQUIRED',
+    statusCode: 400,
+  };
+}
+
+export type OtpPurpose = 'LOGIN' | 'REGISTRATION';
+export type PickerNextScreen =
+  | 'main'
+  | 'onboarding'
+  | 'pending_review'
+  | 'rejected'
+  | 'suspended'
+  | 'inactive'
+  | 'blocked'
+  | 'deletion_pending'
+  | 'create_account';
 
 export interface PickerAuthUserDto {
   id: string;
@@ -68,7 +132,7 @@ export interface PickerAuthUserDto {
   onboardingCompleted: boolean;
   rejectedReason: string | null;
   role: string;
-  workforceRole: WorkforceRole | null;
+  workforceRole: WorkforceRole;
 }
 
 export interface PickerAuthResult {
@@ -83,13 +147,24 @@ export interface PickerAuthResult {
   nextScreen?: PickerNextScreen;
   channel?: string;
   retryAfterSeconds?: number;
-  /** Truthful provider outcome — only present on send/resend OTP. */
   deliveryStatus?: 'sent' | 'failed';
+  exists?: boolean;
+  canLogin?: boolean;
+  next?: 'OTP' | 'CREATE_ACCOUNT' | 'LOGIN';
+  phoneRegistered?: boolean;
+  emailRegistered?: boolean;
 }
 
-// ─── Normalisation ────────────────────────────────────────────────────────────
+/**
+ * Only OTP_DEV_MODE may accept a failed provider send (console OTP still logged).
+ * Non-production alone must NOT fake success — that left the app on the OTP
+ * screen with no SMS delivered (SpearUC / Twilio outages looked like "sent").
+ */
+function otpDevFallback(): boolean {
+  return Boolean((appConfig as { otp?: { devMode?: boolean } }).otp?.devMode);
+}
 
-function normalizePhone(phone: unknown): string | null {
+export function normalizePhone(phone: unknown): string | null {
   const raw = String(phone ?? '').replace(/\D/g, '');
   let digits = raw;
   if (raw.length === 12 && raw.startsWith('91')) digits = raw.slice(2);
@@ -99,36 +174,67 @@ function normalizePhone(phone: unknown): string | null {
   return digits;
 }
 
-function normalizeEmail(email: unknown): string | null {
+export function normalizeEmail(email: unknown): string | null {
   const s = String(email ?? '').trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : null;
 }
 
-// ─── OTP storage + throttling ─────────────────────────────────────────────────
+/** Role-scoped so a Picker OTP can never verify a Rider login (and vice versa). */
+function emailOtpKey(email: string, role: WorkforceRole): string {
+  return `${role}|email|${email}`;
+}
 
-/**
- * Enforces the send throttle before an OTP is generated or delivered.
- *
- * `sendCount`/`windowStartedAt` live on the OTP record rather than the per-send
- * `attempts` counter precisely because `storeOtp` resets `attempts` — without a
- * separate window, resending would reset the verify cap indefinitely.
- */
+function phoneOtpKey(phone: string, role: WorkforceRole): string {
+  return `${role}|phone|${phone}`;
+}
+
+function registrationOtpKey(phone: string, role: WorkforceRole): string {
+  return `${role}|reg|${phone}`;
+}
+
+function isDuplicateKeyError(err: unknown): { field?: string } | null {
+  const e = err as { code?: number; keyPattern?: Record<string, unknown>; message?: string };
+  if (e?.code !== 11000) return null;
+  const keys = Object.keys(e.keyPattern || {});
+  if (keys.includes('phone')) return { field: 'phone' };
+  if (keys.includes('email')) return { field: 'email' };
+  const msg = String(e.message || '');
+  if (/phone/i.test(msg)) return { field: 'phone' };
+  if (/email/i.test(msg)) return { field: 'email' };
+  return {};
+}
+
+function sanitizeUserStatus(user: { status?: string | null }): PickerUserStatus {
+  const raw = String(user.status || 'PENDING').trim();
+  const upper = raw.toUpperCase().replace(/-/g, '_');
+  if (upper === 'UNDER_REVIEW' || raw === 'under_review' || upper === 'DOCS_REQUIRED' || raw === 'docs_required') {
+    user.status = 'PENDING';
+    return 'PENDING';
+  }
+  if (VALID_STATUS_SET.has(upper)) {
+    user.status = upper as PickerUserStatus;
+    return upper as PickerUserStatus;
+  }
+  user.status = 'PENDING';
+  return 'PENDING';
+}
+
+async function safeSaveUser(user: { status?: string | null; save: () => Promise<unknown> }): Promise<void> {
+  sanitizeUserStatus(user);
+  await user.save();
+}
+
 async function reserveSendSlot(identifier: string): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
   const now = new Date();
   const windowMs = pickerConfig.otpThrottleWindowMinutes * 60000;
   const record = await PickerOtp.findOne({ identifier });
-
   if (record?.windowStartedAt && now.getTime() - new Date(record.windowStartedAt).getTime() < windowMs) {
     if ((record.sendCount || 0) >= pickerConfig.otpMaxSendsPerWindow) {
-      const retryAfterSeconds = Math.ceil(
-        (new Date(record.windowStartedAt).getTime() + windowMs - now.getTime()) / 1000,
-      );
+      const retryAfterSeconds = Math.ceil((new Date(record.windowStartedAt).getTime() + windowMs - now.getTime()) / 1000);
       return { allowed: false, retryAfterSeconds: Math.max(1, retryAfterSeconds) };
     }
     return { allowed: true, retryAfterSeconds: 0 };
   }
-
-  // First send, or the previous window has elapsed — start a fresh one.
   if (record) {
     record.windowStartedAt = now;
     record.sendCount = 0;
@@ -137,71 +243,81 @@ async function reserveSendSlot(identifier: string): Promise<{ allowed: boolean; 
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-async function storeOtp(identifier: string, otp: string): Promise<void> {
+async function storeOtp(
+  identifier: string,
+  otp: string,
+  purpose: OtpPurpose,
+  meta?: { phone?: string; email?: string; userId?: string },
+): Promise<void> {
   const expiresAt = new Date(Date.now() + OTP_EXPIRE_MINUTES * 60000);
-  const existing = (await PickerOtp.findOne({ identifier }).select('sendCount windowStartedAt').lean()) as { windowStartedAt?: Date } | null;
+  const existing = (await PickerOtp.findOne({ identifier }).select('windowStartedAt').lean()) as { windowStartedAt?: Date } | null;
   const windowStartedAt = existing?.windowStartedAt || new Date();
   await PickerOtp.findOneAndUpdate(
     { identifier },
     {
-      $set: { identifier, otp, expiresAt, attempts: 0, verified: false, windowStartedAt },
+      $set: {
+        identifier,
+        otp,
+        expiresAt,
+        attempts: 0,
+        verified: false,
+        windowStartedAt,
+        purpose,
+        pendingPhone: meta?.phone || null,
+        pendingEmail: meta?.email || null,
+        pendingUserId: meta?.userId || null,
+      },
       $inc: { sendCount: 1 },
     },
     { upsert: true, new: true },
   );
 }
 
-type OtpCheck = { ok: true } | { ok: false; errorCode: 'OTP_EXPIRED' | 'OTP_RATE_LIMITED' | 'INCORRECT_OTP' };
+type OtpFailCode = 'OTP_EXPIRED' | 'OTP_RATE_LIMITED' | 'INCORRECT_OTP' | 'OTP_PURPOSE_MISMATCH';
+type OtpCheck = { ok: true; purpose: OtpPurpose } | { ok: false; errorCode: OtpFailCode };
 
-/**
- * Validates an OTP without marking it verified. Wrong attempts still increment
- * the counter. Call `consumeOtp` only after the login/signup side-effects succeed
- * so a correct OTP + ACCOUNT_NOT_FOUND (login intent) can be retried as signup.
- */
-async function matchOtp(identifier: string, otp: string): Promise<OtpCheck> {
+async function matchOtp(identifier: string, otp: string, expectedPurpose: OtpPurpose): Promise<OtpCheck> {
   const record = await PickerOtp.findOne({ identifier, verified: false, expiresAt: { $gt: new Date() } });
   if (!record) return { ok: false, errorCode: 'OTP_EXPIRED' };
-
-  if ((record.attempts || 0) >= pickerConfig.otpMaxVerifyAttempts) {
-    return { ok: false, errorCode: 'OTP_RATE_LIMITED' };
-  }
-
+  if ((record.attempts || 0) >= pickerConfig.otpMaxVerifyAttempts) return { ok: false, errorCode: 'OTP_RATE_LIMITED' };
+  const purpose = String((record as { purpose?: string }).purpose || 'LOGIN').toUpperCase() as OtpPurpose;
+  if (purpose !== expectedPurpose) return { ok: false, errorCode: 'OTP_PURPOSE_MISMATCH' };
   if (record.otp !== String(otp).trim()) {
     record.attempts += 1;
     await record.save();
     if (record.attempts >= pickerConfig.otpMaxVerifyAttempts) return { ok: false, errorCode: 'OTP_RATE_LIMITED' };
     return { ok: false, errorCode: 'INCORRECT_OTP' };
   }
-
-  return { ok: true };
+  return { ok: true, purpose };
 }
 
 async function consumeOtp(identifier: string): Promise<void> {
-  await PickerOtp.findOneAndUpdate(
-    { identifier, verified: false },
-    { $set: { verified: true } },
-  );
+  await PickerOtp.findOneAndUpdate({ identifier, verified: false }, { $set: { verified: true } });
 }
 
-// ─── Tokens ───────────────────────────────────────────────────────────────────
+function otpFailure(errorCode: OtpFailCode): PickerAuthResult {
+  if (errorCode === 'OTP_RATE_LIMITED') {
+    return { success: false, message: 'Too many incorrect attempts. Please request a new code.', errorCode: 'OTP_TOO_MANY_ATTEMPTS', statusCode: 429 };
+  }
+  if (errorCode === 'INCORRECT_OTP') {
+    return { success: false, message: 'Invalid OTP. Please try again.', errorCode: 'INVALID_OTP', statusCode: 400 };
+  }
+  if (errorCode === 'OTP_PURPOSE_MISMATCH') {
+    return { success: false, message: 'This code cannot be used for this action. Please request a new code.', errorCode: 'OTP_PURPOSE_MISMATCH', statusCode: 400 };
+  }
+  return { success: false, message: 'OTP has expired. Please request a new code.', errorCode: 'OTP_EXPIRED', statusCode: 400 };
+}
 
 function signToken(userId: string, sessionToken: string, workforceRole?: string | null): { token: string; expiresAt: string } {
   const role = parseWorkforceRole(workforceRole);
   const token = jwt.sign(
-    {
-      sub: userId,
-      userId,
-      id: userId,
-      sid: sessionToken,
-      ...(role ? { workforceRole: role } : {}),
-    },
-    JWT_SECRET,
-    { expiresIn: `${TOKEN_TTL_DAYS}d`, audience: PICKER_TOKEN_AUDIENCE },
+    { sub: userId, userId, id: userId, sid: sessionToken, ...(role ? { workforceRole: role } : {}) },
+    PICKER_JWT_SECRET,
+    { expiresIn: `${TOKEN_TTL_DAYS}d`, audience: workforceTokenAudience(role) },
   );
   return { token, expiresAt: new Date(Date.now() + TOKEN_TTL_DAYS * 86400000).toISOString() };
 }
 
-/** Rotates the rider's session and returns a token bound to it. */
 async function issueSession(user: {
   _id: unknown;
   sessionToken?: string | null;
@@ -210,31 +326,47 @@ async function issueSession(user: {
 }): Promise<{ token: string; expiresAt: string }> {
   const sessionToken = crypto.randomUUID();
   user.sessionToken = sessionToken;
-  await user.save();
+  await safeSaveUser(user);
   return signToken(String(user._id), sessionToken, user.workforceRole);
 }
 
-/** Kept for callers that only need a signed token for an already-persisted session. */
 function buildToken(user: { _id: unknown; sessionToken?: string | null; workforceRole?: string | null }): string {
   return signToken(String(user._id), user.sessionToken || crypto.randomUUID(), user.workforceRole).token;
 }
 
-function applyClientWorkforceRole(user: { workforceRole?: WorkforceRole | string | null }, client?: WorkforceRole): void {
-  if (!client) return;
-  if (!user.workforceRole) user.workforceRole = client;
+/** Legacy rows without workforceRole are treated as riders (matches dispatch/admin defaults). */
+function roleAppLabel(role: WorkforceRole): string {
+  return role === 'picker' ? 'Picker' : 'Rider';
 }
 
-// ─── Account state → routing ──────────────────────────────────────────────────
+function roleMismatchResult(expected: WorkforceRole): PickerAuthResult {
+  const actual = expected === 'rider' ? 'picker' : 'rider';
+  return {
+    success: false,
+    message: `This account is registered as a ${roleAppLabel(actual).toLowerCase()}. Please use the ${roleAppLabel(actual)} app.`,
+    errorCode: 'ROLE_MISMATCH',
+    statusCode: 403,
+    exists: true,
+    canLogin: false,
+  };
+}
 
-/**
- * Whether the rider has finished onboarding. Approval is authoritative: an
- * `ACTIVE` account is by definition past review. Otherwise onboarding counts as
- * complete once the application has actually been submitted.
- */
-async function resolveOnboarding(user: {
-  _id: unknown;
-  status?: string;
-}): Promise<{ onboardingCompleted: boolean; submitted: boolean }> {
+function assertWorkforceRole(
+  user: { workforceRole?: WorkforceRole | string | null },
+  expected?: WorkforceRole,
+): PickerAuthResult | null {
+  if (!expected) return null;
+  if (effectiveWorkforceRole(user) !== expected) return roleMismatchResult(expected);
+  return null;
+}
+
+/** Stamp unset role from client; never overwrite an existing role. */
+function applyClientWorkforceRole(user: { workforceRole?: WorkforceRole | string | null }, client?: WorkforceRole): void {
+  if (!client) return;
+  if (!parseWorkforceRole(user.workforceRole)) user.workforceRole = client;
+}
+
+async function resolveOnboarding(user: { _id: unknown; status?: string }): Promise<{ onboardingCompleted: boolean; submitted: boolean }> {
   if (String(user.status).toUpperCase() === 'ACTIVE') return { onboardingCompleted: true, submitted: true };
   const application = await PickerOnboardingApplication.findOne({ pickerId: user._id }).select('status').lean();
   const submitted = Boolean(application && application.status !== 'draft');
@@ -246,14 +378,44 @@ function resolveNextScreen(status: string, submitted: boolean): PickerNextScreen
     case 'ACTIVE': return 'main';
     case 'SUSPENDED': return 'suspended';
     case 'REJECTED': return 'rejected';
-    // INACTIVE riders are approved but stood down; the app shows Main and the
-    // shift screens report no availability.
-    case 'INACTIVE': return 'main';
+    case 'INACTIVE': return 'inactive';
+    case 'BLOCKED': return 'blocked';
+    case 'DELETION_PENDING': return 'deletion_pending';
     default: return submitted ? 'pending_review' : 'onboarding';
   }
 }
 
+function loginStatusGate(status: string, role?: WorkforceRole): PickerAuthResult | null {
+  const accountLabel = role === 'picker' ? 'picker' : role === 'rider' ? 'rider' : 'account';
+  switch (String(status || 'PENDING').toUpperCase()) {
+    case 'ACTIVE':
+    case 'PENDING':
+      return null;
+    case 'INACTIVE':
+      return { success: false, message: `Your ${accountLabel} account is inactive. Please contact support.`, errorCode: 'ACCOUNT_INACTIVE', statusCode: 403, nextScreen: 'inactive' };
+    case 'REJECTED':
+      return { success: false, message: `Your ${accountLabel} application was not approved.`, errorCode: 'ACCOUNT_REJECTED', statusCode: 403, nextScreen: 'rejected' };
+    case 'SUSPENDED':
+      return { success: false, message: `Your ${accountLabel} account is currently suspended. Please contact support.`, errorCode: 'ACCOUNT_SUSPENDED', statusCode: 403, nextScreen: 'suspended' };
+    case 'BLOCKED':
+      return { success: false, message: `Your ${accountLabel} account has been blocked. Please contact support.`, errorCode: 'ACCOUNT_BLOCKED', statusCode: 403, nextScreen: 'blocked' };
+    case 'DELETION_PENDING':
+      return { success: false, message: `Your ${accountLabel} account is scheduled for deletion.`, errorCode: 'ACCOUNT_DELETION_PENDING', statusCode: 403, nextScreen: 'deletion_pending' };
+    default:
+      return null;
+  }
+}
+
+const BLOCKED_LOGIN_CODES = new Set([
+  'ACCOUNT_INACTIVE',
+  'ACCOUNT_REJECTED',
+  'ACCOUNT_SUSPENDED',
+  'ACCOUNT_BLOCKED',
+  'ACCOUNT_DELETION_PENDING',
+]);
+
 export async function buildAuthUserDto(user: any): Promise<{ user: PickerAuthUserDto; nextScreen: PickerNextScreen }> {
+  sanitizeUserStatus(user);
   const { onboardingCompleted, submitted } = await resolveOnboarding(user);
   const status = toApiAccountStatus(user.status);
   return {
@@ -267,315 +429,455 @@ export async function buildAuthUserDto(user: any): Promise<{ user: PickerAuthUse
       onboardingCompleted,
       rejectedReason: status === 'rejected' ? user.rejectedReason || null : null,
       role: pickerDisplayRole(user),
-      workforceRole: parseWorkforceRole(user.workforceRole) || null,
+      workforceRole: effectiveWorkforceRole(user),
     },
     nextScreen: resolveNextScreen(user.status, submitted),
   };
 }
 
-// ─── SMS / WhatsApp OTP ───────────────────────────────────────────────────────
-
-function logDevOtp(target: string, channel: string, otp: string): void {
-  if (IS_NON_PRODUCTION) {
-    logger.info(`[DEV] ${RIDER_APP_NAME} OTP for ${target} (${channel}): ${otp}`);
+async function finalizeLogin(user: any, isNewUser: boolean): Promise<PickerAuthResult> {
+  sanitizeUserStatus(user);
+  const role = effectiveWorkforceRole(user);
+  const gate = loginStatusGate(String(user.status), role);
+  if (gate) {
+    try { await safeSaveUser(user); } catch { /* ignore */ }
+    return gate;
   }
+  const { token, expiresAt } = await issueSession(user);
+  const { user: dto, nextScreen } = await buildAuthUserDto(user);
+  if (String(user.status).toUpperCase() === 'PENDING' && nextScreen === 'pending_review') {
+    return {
+      success: true,
+      message: `Your ${role} account is pending approval.`,
+      errorCode: 'ACCOUNT_PENDING',
+      token,
+      expiresAt,
+      isNewUser,
+      user: dto,
+      nextScreen: 'pending_review',
+    };
+  }
+  return { success: true, message: 'OTP verified', token, expiresAt, isNewUser, user: dto, nextScreen };
 }
 
-/**
- * Issue phone OTP using the same SMS/WhatsApp providers as Customer auth.
- * Success is returned only when the provider accepts the message.
- */
-export async function sendOtp(phone: unknown, options: { preferredChannel?: string } = {}): Promise<PickerAuthResult> {
-  const trimmed = normalizePhone(phone);
-  if (!trimmed) {
-    return { success: false, message: 'Please provide a valid 10-digit mobile number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
+function logDevOtp(target: string, channel: string, otp: string, role?: WorkforceRole | null): void {
+  if (IS_NON_PRODUCTION) logger.info(`[DEV] ${resolveAppName(role)} OTP for ${target} (${channel}): ${otp}`);
+}
+
+export async function checkAccount(
+  loginType: unknown,
+  value: unknown,
+  options: { workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const expected = options.workforceRole!;
+  const type = String(loginType || '').trim().toLowerCase();
+  const accountLabel = roleAppLabel(expected).toLowerCase();
+  if (type === 'phone' || type === 'mobile') {
+    const phone = normalizePhone(value);
+    if (!phone) return { success: false, message: 'Please provide a valid 10-digit mobile number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
+    const user = await PickerUser.findOne({ phone, phoneIsPlaceholder: { $ne: true } }).select('status workforceRole');
+    if (!user) {
+      return { success: true, message: `No ${accountLabel} account found with this phone number. Please create an account first.`, exists: false, canLogin: false, next: 'CREATE_ACCOUNT', errorCode: 'ACCOUNT_NOT_FOUND' };
+    }
+    const mismatch = assertWorkforceRole(user, expected);
+    if (mismatch) return mismatch;
+    sanitizeUserStatus(user);
+    const gate = loginStatusGate(String(user.status), expected);
+    if (gate && BLOCKED_LOGIN_CODES.has(gate.errorCode || '')) return { ...gate, exists: true, canLogin: false };
+    return { success: true, message: `${roleAppLabel(expected)} found. Continue with OTP.`, exists: true, canLogin: true, next: 'OTP' };
+  }
+  if (type === 'email') {
+    const email = normalizeEmail(value);
+    if (!email) return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
+    const user = await PickerUser.findOne({ email }).select('status workforceRole');
+    if (!user) {
+      return { success: true, message: `No ${accountLabel} account found with this email address. Please create an account first.`, exists: false, canLogin: false, next: 'CREATE_ACCOUNT', errorCode: 'ACCOUNT_NOT_FOUND' };
+    }
+    const mismatch = assertWorkforceRole(user, expected);
+    if (mismatch) return mismatch;
+    sanitizeUserStatus(user);
+    const gate = loginStatusGate(String(user.status), expected);
+    if (gate && BLOCKED_LOGIN_CODES.has(gate.errorCode || '')) return { ...gate, exists: true, canLogin: false };
+    return { success: true, message: `${roleAppLabel(expected)} found. Continue with OTP.`, exists: true, canLogin: true, next: 'OTP' };
+  }
+  return { success: false, message: 'loginType must be phone or email.', errorCode: 'INVALID_INPUT', statusCode: 400 };
+}
+
+export async function checkRegistration(
+  phoneRaw: unknown,
+  emailRaw: unknown,
+  options: { workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const expected = options.workforceRole!;
+  const phone = normalizePhone(phoneRaw);
+  const email = normalizeEmail(emailRaw);
+  if (!phone) return { success: false, message: 'Please provide a valid 10-digit mobile number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
+  if (!email) return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
+
+  const [byPhone, byEmail] = await Promise.all([
+    PickerUser.findOne({ phone, phoneIsPlaceholder: { $ne: true } }).select('_id workforceRole'),
+    PickerUser.findOne({ email }).select('_id workforceRole'),
+  ]);
+  const phoneRegistered = Boolean(byPhone);
+  const emailRegistered = Boolean(byEmail);
+
+  if (byPhone && assertWorkforceRole(byPhone, expected)) {
+    return { ...roleMismatchResult(expected), phoneRegistered: true, emailRegistered, next: 'LOGIN' };
+  }
+  if (byEmail && assertWorkforceRole(byEmail, expected)) {
+    return { ...roleMismatchResult(expected), phoneRegistered, emailRegistered: true, next: 'LOGIN' };
   }
 
-  const isWhatsApp = String(options.preferredChannel || 'sms').toLowerCase() === 'whatsapp';
-  const channel = isWhatsApp ? 'whatsapp' : 'sms';
+  if (phoneRegistered && emailRegistered) {
+    return { success: false, message: 'This phone number and email address are already registered. Please login instead.', errorCode: 'PHONE_AND_EMAIL_ALREADY_REGISTERED', statusCode: 409, phoneRegistered: true, emailRegistered: true, next: 'LOGIN' };
+  }
+  if (phoneRegistered) {
+    return { success: false, message: 'This phone number is already registered. Please login using this number instead.', errorCode: 'PHONE_ALREADY_REGISTERED', statusCode: 409, phoneRegistered: true, emailRegistered: false, next: 'LOGIN' };
+  }
+  if (emailRegistered) {
+    return { success: false, message: 'This email address is already registered. Please login using this email instead.', errorCode: 'EMAIL_ALREADY_REGISTERED', statusCode: 409, phoneRegistered: false, emailRegistered: true, next: 'LOGIN' };
+  }
+  return { success: true, message: 'Phone and email are available. Continue with registration OTP.', phoneRegistered: false, emailRegistered: false, next: 'OTP' };
+}
 
-  const slot = await reserveSendSlot(trimmed);
+export async function sendOtp(
+  phone: unknown,
+  options: { preferredChannel?: string; purpose?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  if (String(options.purpose || 'LOGIN').toUpperCase() === 'REGISTRATION') {
+    return { success: false, message: 'Use the registration endpoint with phone and email.', errorCode: 'INVALID_INPUT', statusCode: 400 };
+  }
+  const trimmed = normalizePhone(phone);
+  if (!trimmed) return { success: false, message: 'Please provide a valid 10-digit mobile number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
+
+  const existing = await PickerUser.findOne({ phone: trimmed, phoneIsPlaceholder: { $ne: true } }).select('_id status workforceRole');
+  if (!existing) {
+    return { success: false, message: `No ${roleAppLabel(role).toLowerCase()} account found with this phone number. Please create an account first.`, errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404, exists: false, canLogin: false, next: 'CREATE_ACCOUNT' };
+  }
+  const mismatch = assertWorkforceRole(existing, role);
+  if (mismatch) return mismatch;
+  sanitizeUserStatus(existing);
+  const gate = loginStatusGate(String(existing.status), role);
+  if (gate && BLOCKED_LOGIN_CODES.has(gate.errorCode || '')) return { ...gate, exists: true, canLogin: false };
+
+  const channel = String(options.preferredChannel || 'sms').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'sms';
+  const identifier = phoneOtpKey(trimmed, role);
+  const slot = await reserveSendSlot(identifier);
   if (!slot.allowed) {
-    return {
-      success: false,
-      message: `Too many OTP requests. Please try again in ${Math.ceil(slot.retryAfterSeconds / 60)} minute(s).`,
-      errorCode: 'OTP_RATE_LIMITED',
-      statusCode: 429,
-      retryAfterSeconds: slot.retryAfterSeconds,
-    };
+    return { success: false, message: `Too many OTP requests. Please try again in ${Math.ceil(slot.retryAfterSeconds / 60)} minute(s).`, errorCode: 'OTP_RATE_LIMITED', statusCode: 429, retryAfterSeconds: slot.retryAfterSeconds };
   }
 
   const otp = generateOtp(4);
-  logDevOtp(trimmed, channel, otp);
-
-  // Pass bare 10 digits — same as Customer. sms.service applies +91 for Twilio.
-  const delivery = await awaitOtpDelivery(
-    `${channel.toUpperCase()} OTP`,
-    trimmed,
-    () => deliverOtpToPhone(trimmed, otp, channel, OTP_EXPIRE_MINUTES),
+  logDevOtp(trimmed, channel, otp, role);
+  const delivery = await awaitOtpDelivery(`${channel.toUpperCase()} OTP`, trimmed, () =>
+    withOtpMessageTemplate(resolvePhoneOtpTemplate(role, channel), () =>
+      deliverOtpToPhone(trimmed, otp, channel, OTP_EXPIRE_MINUTES),
+    ),
   );
-
   if (!delivery.sent && !otpDevFallback()) {
-    logger.error('[PickerAuth] SMS/WhatsApp OTP delivery failed', {
-      phone: trimmed,
-      channel,
-      errorCode: delivery.errorCode,
-      provider: delivery.provider,
-      message: delivery.message,
-    });
-    return {
-      success: false,
-      message: delivery.message || 'Unable to send OTP. Please try again.',
-      errorCode: delivery.errorCode || 'OTP_PROVIDER_ERROR',
-      statusCode: 502,
-      channel,
-      deliveryStatus: 'failed',
-    };
+    logger.error('[PickerAuth] LOGIN SMS/WhatsApp OTP delivery failed', { phone: trimmed, channel, role, errorCode: delivery.errorCode, provider: delivery.provider, message: delivery.message });
+    return { success: false, message: delivery.message || 'Unable to send OTP. Please try again.', errorCode: delivery.errorCode || 'OTP_PROVIDER_ERROR', statusCode: 502, channel, deliveryStatus: 'failed' };
   }
-
-  await storeOtp(trimmed, otp);
-  const delivered = !!delivery.sent;
-  return {
-    success: true,
-    message: delivered
-      ? 'OTP sent successfully'
-      : 'Mobile OTP could not be delivered. Sign in with email instead.',
-    channel: delivery.channel || channel,
-    deliveryStatus: delivered ? 'sent' : 'failed',
-  };
+  await storeOtp(identifier, otp, 'LOGIN', { phone: trimmed, userId: String(existing._id) });
+  return { success: true, message: 'OTP sent successfully', channel: delivery.channel || channel, deliveryStatus: delivery.sent ? 'sent' : 'failed' };
 }
 
-export async function resendOtp(phone: unknown, options: { preferredChannel?: string } = {}): Promise<PickerAuthResult> {
+export async function resendOtp(
+  phone: unknown,
+  options: { preferredChannel?: string; purpose?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
   return sendOtp(phone, options);
 }
 
 export async function verifyOtp(
   phone: unknown,
   otp: unknown,
-  options: { preferredChannel?: string; storeId?: string; intent?: string; workforceRole?: WorkforceRole } = {},
+  options: { preferredChannel?: string; storeId?: string; intent?: string; purpose?: string; workforceRole?: WorkforceRole } = {},
 ): Promise<PickerAuthResult> {
-  const otpStr = String(otp ?? '').trim();
-  if (!/^\d{4}$/.test(otpStr)) {
-    return { success: false, message: 'OTP must be exactly 4 numeric digits', errorCode: 'INCORRECT_OTP', statusCode: 400 };
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  const purpose = String(options.purpose || options.intent || 'LOGIN').toUpperCase();
+  if (purpose === 'SIGNUP' || purpose === 'REGISTRATION') {
+    return { success: false, message: 'Use the registration verify endpoint with phone and email.', errorCode: 'INVALID_INPUT', statusCode: 400 };
   }
-
+  const otpStr = String(otp ?? '').trim();
+  if (!/^\d{4}$/.test(otpStr)) return { success: false, message: 'OTP must be exactly 4 numeric digits', errorCode: 'INVALID_OTP', statusCode: 400 };
   const trimmed = normalizePhone(phone);
   if (!trimmed) return { success: false, message: 'Invalid phone number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
 
-  const check = await matchOtp(trimmed, otpStr);
-  if (!check.ok) {
-    if (check.errorCode === 'OTP_RATE_LIMITED') {
-      return { success: false, message: 'Too many incorrect attempts. Please request a new code.', errorCode: 'OTP_RATE_LIMITED', statusCode: 429 };
-    }
-    if (check.errorCode === 'INCORRECT_OTP') {
-      return { success: false, message: 'Invalid OTP. Please try again.', errorCode: 'INCORRECT_OTP', statusCode: 400 };
-    }
-    return { success: false, message: 'Invalid or expired OTP. Please try again.', errorCode: 'OTP_EXPIRED', statusCode: 400 };
-  }
+  const identifier = phoneOtpKey(trimmed, role);
+  const check = await matchOtp(identifier, otpStr, 'LOGIN');
+  if (!check.ok) return otpFailure(check.errorCode);
 
-  const loginMethod = String(options.preferredChannel || 'sms').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'mobile';
-  let user = await PickerUser.findOne({ phone: trimmed });
-  const isNewUser = !user;
-
-  // `intent: 'login'` means the rider tapped "Log in", so an absent account is an
-  // error the app surfaces as a Create-Account banner — not a silent signup.
-  if (!user && String(options.intent || '').toLowerCase() === 'login') {
-    return { success: false, message: 'No account found for this number.', errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404 };
-  }
-
-  await consumeOtp(trimmed);
-
+  const user = await PickerUser.findOne({ phone: trimmed });
   if (!user) {
-    user = await PickerUser.create({
-      phone: trimmed,
-      loginMethod,
-      ...(options.workforceRole ? { workforceRole: options.workforceRole } : {}),
-    });
-  } else {
-    user.loginMethod = loginMethod;
-    // An email-only account logging in by phone now owns a real number.
-    if (user.phoneIsPlaceholder) user.phoneIsPlaceholder = false;
-    applyClientWorkforceRole(user, options.workforceRole);
+    return { success: false, message: `No ${roleAppLabel(role).toLowerCase()} account found with this phone number. Please create an account first.`, errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404, next: 'CREATE_ACCOUNT' };
   }
-
-  // Persist the store the picker signed in against (their home store for
-  // this session). Used by dispatch batchAssignByStore to scope work.
+  const mismatch = assertWorkforceRole(user, role);
+  if (mismatch) return mismatch;
+  await consumeOtp(identifier);
+  user.loginMethod = String(options.preferredChannel || 'sms').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'mobile';
+  if (user.phoneIsPlaceholder) user.phoneIsPlaceholder = false;
+  applyClientWorkforceRole(user, role);
   if (options.storeId && mongoose.Types.ObjectId.isValid(options.storeId)) {
-    user.storeId = new mongoose.Types.ObjectId(options.storeId);
-    await user.save();
+    (user as any).storeId = new mongoose.Types.ObjectId(options.storeId);
   }
-
-  return finalizeLogin(user, isNewUser);
+  return finalizeLogin(user, false);
 }
 
-// ─── Email OTP ────────────────────────────────────────────────────────────────
-
-/**
- * `PickerUser.phone` is `required` + `unique`, so an email-only signup needs a
- * deterministic filler. It is flagged via `phoneIsPlaceholder` and never returned.
- */
-function syntheticPhone(email: string): string {
-  const hex = crypto.createHash('md5').update(email).digest('hex');
-  const digits = hex.replace(/[a-f]/gi, '').slice(0, 9);
-  return `1${digits.padEnd(9, '0')}`;
-}
-
-export async function sendOtpEmail(email: unknown): Promise<PickerAuthResult> {
+export async function sendOtpEmail(
+  email: unknown,
+  options: { purpose?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  if (String(options.purpose || 'LOGIN').toUpperCase() === 'REGISTRATION') {
+    return { success: false, message: 'Use the registration endpoint with phone and email.', errorCode: 'INVALID_INPUT', statusCode: 400 };
+  }
   const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail) {
-    return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
-  }
+  if (!normalizedEmail) return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
 
-  const identifier = `email|${normalizedEmail}`;
+  const existing = await PickerUser.findOne({ email: normalizedEmail }).select('_id status workforceRole');
+  if (!existing) {
+    return { success: false, message: `No ${roleAppLabel(role).toLowerCase()} account found with this email address. Please create an account first.`, errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404, exists: false, canLogin: false, next: 'CREATE_ACCOUNT' };
+  }
+  const mismatch = assertWorkforceRole(existing, role);
+  if (mismatch) return mismatch;
+  sanitizeUserStatus(existing);
+  const gate = loginStatusGate(String(existing.status), role);
+  if (gate && BLOCKED_LOGIN_CODES.has(gate.errorCode || '')) return { ...gate, exists: true, canLogin: false };
+
+  const identifier = emailOtpKey(normalizedEmail, role);
   const slot = await reserveSendSlot(identifier);
   if (!slot.allowed) {
-    return {
-      success: false,
-      message: `Too many OTP requests. Please try again in ${Math.ceil(slot.retryAfterSeconds / 60)} minute(s).`,
-      errorCode: 'OTP_RATE_LIMITED',
-      statusCode: 429,
-      retryAfterSeconds: slot.retryAfterSeconds,
-    };
+    return { success: false, message: `Too many OTP requests. Please try again in ${Math.ceil(slot.retryAfterSeconds / 60)} minute(s).`, errorCode: 'OTP_RATE_LIMITED', statusCode: 429, retryAfterSeconds: slot.retryAfterSeconds };
   }
-
   const otp = generateOtp(4);
-  logDevOtp(normalizedEmail, 'email', otp);
-
+  logDevOtp(normalizedEmail, 'email', otp, role);
   const delivery = await awaitOtpDelivery('Email OTP', normalizedEmail, () =>
     deliverOtpToEmail({
       email: normalizedEmail,
       otp,
       expiresInMinutes: OTP_EXPIRE_MINUTES,
-      appName: RIDER_APP_NAME,
-      from: riderEmailFrom(),
+      appName: resolveAppName(role),
+      from: resolveEmailFrom(role),
     }),
   );
-
   if (!delivery.sent && !otpDevFallback()) {
-    logger.error('[PickerAuth] Email OTP delivery failed', {
-      email: normalizedEmail,
+    logger.error('[PickerAuth] LOGIN email OTP delivery failed', { email: normalizedEmail, role, provider: delivery.provider, message: delivery.message, errorCode: delivery.errorCode });
+    return { success: false, message: delivery.message || 'Unable to send OTP. Please try again.', errorCode: delivery.errorCode || 'EMAIL_PROVIDER_ERROR', statusCode: 502, channel: 'email', deliveryStatus: 'failed' };
+  }
+  await storeOtp(identifier, otp, 'LOGIN', { email: normalizedEmail, userId: String(existing._id) });
+  return { success: true, message: 'OTP sent successfully', channel: 'email', deliveryStatus: delivery.sent ? 'sent' : 'failed' };
+}
+
+export async function resendOtpEmail(
+  email: unknown,
+  options: { purpose?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  return sendOtpEmail(email, options);
+}
+
+export async function verifyOtpEmail(
+  email: unknown,
+  otp: unknown,
+  options: { intent?: string; purpose?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  const purpose = String(options.purpose || options.intent || 'LOGIN').toUpperCase();
+  if (purpose === 'SIGNUP' || purpose === 'REGISTRATION') {
+    return { success: false, message: 'Use the registration verify endpoint with phone and email.', errorCode: 'INVALID_INPUT', statusCode: 400 };
+  }
+  const normalizedEmail = normalizeEmail(email);
+  const otpStr = String(otp ?? '').trim();
+  if (!normalizedEmail) return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
+  if (!/^\d{4}$/.test(otpStr)) return { success: false, message: 'OTP must be exactly 4 numeric digits', errorCode: 'INVALID_OTP', statusCode: 400 };
+
+  const identifier = emailOtpKey(normalizedEmail, role);
+  const check = await matchOtp(identifier, otpStr, 'LOGIN');
+  if (!check.ok) return otpFailure(check.errorCode);
+
+  const user = await PickerUser.findOne({ email: normalizedEmail });
+  if (!user) {
+    return { success: false, message: `No ${roleAppLabel(role).toLowerCase()} account found with this email address. Please create an account first.`, errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404, next: 'CREATE_ACCOUNT' };
+  }
+  const mismatch = assertWorkforceRole(user, role);
+  if (mismatch) return mismatch;
+  await consumeOtp(identifier);
+  user.loginMethod = 'email';
+  applyClientWorkforceRole(user, role);
+  return finalizeLogin(user, false);
+}
+
+export async function sendRegistrationOtp(
+  phoneRaw: unknown,
+  emailRaw: unknown,
+  options: { preferredChannel?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  const precheck = await checkRegistration(phoneRaw, emailRaw, { workforceRole: role });
+  if (!precheck.success) return precheck;
+  const phone = normalizePhone(phoneRaw)!;
+  const email = normalizeEmail(emailRaw)!;
+  const identifier = registrationOtpKey(phone, role);
+
+  const slot = await reserveSendSlot(identifier);
+  if (!slot.allowed) {
+    return { success: false, message: `Too many OTP requests. Please try again in ${Math.ceil(slot.retryAfterSeconds / 60)} minute(s).`, errorCode: 'OTP_RATE_LIMITED', statusCode: 429, retryAfterSeconds: slot.retryAfterSeconds };
+  }
+  const otp = generateOtp(4);
+  logDevOtp(email, 'registration/email', otp, role);
+  const delivery = await awaitOtpDelivery('REGISTRATION Email OTP', email, () =>
+    deliverOtpToEmail({
+      email,
+      otp,
+      expiresInMinutes: OTP_EXPIRE_MINUTES,
+      appName: resolveAppName(role),
+      from: resolveEmailFrom(role),
+    }),
+  );
+  if (!delivery.sent && !otpDevFallback()) {
+    logger.error('[PickerAuth] REGISTRATION email OTP delivery failed', {
+      email,
+      phone,
+      role,
       provider: delivery.provider,
       message: delivery.message,
       errorCode: delivery.errorCode,
     });
     return {
       success: false,
-      message: delivery.message || 'Unable to send OTP. Please try again.',
+      message: delivery.message || 'Unable to send OTP to email. Please try again.',
       errorCode: delivery.errorCode || 'EMAIL_PROVIDER_ERROR',
       statusCode: 502,
       channel: 'email',
       deliveryStatus: 'failed',
     };
   }
-
-  await storeOtp(identifier, otp);
+  await storeOtp(identifier, otp, 'REGISTRATION', { phone, email });
   return {
     success: true,
-    message: delivery.sent
-      ? 'OTP sent successfully'
-      : 'Unable to send OTP. Please try again.',
+    message: 'Registration OTP sent to your email.',
     channel: 'email',
     deliveryStatus: delivery.sent ? 'sent' : 'failed',
   };
 }
 
-export async function resendOtpEmail(email: unknown): Promise<PickerAuthResult> {
-  return sendOtpEmail(email);
-}
-
-export async function verifyOtpEmail(
-  email: unknown,
-  otp: unknown,
-  options: { intent?: string; workforceRole?: WorkforceRole } = {},
+export async function resendRegistrationOtp(
+  phoneRaw: unknown,
+  emailRaw: unknown,
+  options: { preferredChannel?: string; workforceRole?: WorkforceRole } = {},
 ): Promise<PickerAuthResult> {
-  const normalizedEmail = normalizeEmail(email);
+  return sendRegistrationOtp(phoneRaw, emailRaw, options);
+}
+
+export async function verifyRegistrationOtp(
+  phoneRaw: unknown,
+  emailRaw: unknown,
+  otp: unknown,
+  options: { preferredChannel?: string; workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
+  const phone = normalizePhone(phoneRaw);
+  const email = normalizeEmail(emailRaw);
   const otpStr = String(otp ?? '').trim();
-  if (!normalizedEmail) {
-    return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
-  }
-  if (!/^\d{4}$/.test(otpStr)) {
-    return { success: false, message: 'OTP must be exactly 4 numeric digits', errorCode: 'INCORRECT_OTP', statusCode: 400 };
-  }
+  if (!phone) return { success: false, message: 'Please provide a valid 10-digit mobile number.', errorCode: 'INVALID_PHONE', statusCode: 400 };
+  if (!email) return { success: false, message: 'Please enter a valid email address.', errorCode: 'INVALID_EMAIL', statusCode: 400 };
+  if (!/^\d{4}$/.test(otpStr)) return { success: false, message: 'OTP must be exactly 4 numeric digits', errorCode: 'INVALID_OTP', statusCode: 400 };
 
-  const check = await matchOtp(`email|${normalizedEmail}`, otpStr);
-  if (!check.ok) {
-    if (check.errorCode === 'OTP_RATE_LIMITED') {
-      return { success: false, message: 'Too many incorrect attempts. Please request a new code.', errorCode: 'OTP_RATE_LIMITED', statusCode: 429 };
-    }
-    if (check.errorCode === 'INCORRECT_OTP') {
-      return { success: false, message: 'Invalid OTP. Please try again.', errorCode: 'INCORRECT_OTP', statusCode: 400 };
-    }
-    return { success: false, message: 'Invalid or expired OTP. Please try again.', errorCode: 'OTP_EXPIRED', statusCode: 400 };
+  const identifier = registrationOtpKey(phone, role);
+  const check = await matchOtp(identifier, otpStr, 'REGISTRATION');
+  if (!check.ok) return otpFailure(check.errorCode);
+
+  const precheck = await checkRegistration(phone, email, { workforceRole: role });
+  if (!precheck.success) return precheck;
+
+  const otpRecord = (await PickerOtp.findOne({ identifier }).lean()) as { pendingEmail?: string } | null;
+  if (otpRecord?.pendingEmail && normalizeEmail(otpRecord.pendingEmail) !== email) {
+    return { success: false, message: 'Email does not match the registration request. Please restart registration.', errorCode: 'INVALID_INPUT', statusCode: 400 };
   }
 
-  let user = await PickerUser.findOne({ email: normalizedEmail });
-  const isNewUser = !user;
+  await consumeOtp(identifier);
+  const loginMethod = 'email';
 
-  if (!user && String(options.intent || '').toLowerCase() === 'login') {
-    return { success: false, message: 'No account found for this email.', errorCode: 'ACCOUNT_NOT_FOUND', statusCode: 404 };
-  }
-
-  await consumeOtp(`email|${normalizedEmail}`);
-
-  if (!user) {
+  let user: any;
+  try {
     user = await PickerUser.create({
-      phone: syntheticPhone(normalizedEmail),
-      phoneIsPlaceholder: true,
-      email: normalizedEmail,
-      loginMethod: 'email',
-      ...(options.workforceRole ? { workforceRole: options.workforceRole } : {}),
+      phone,
+      email,
+      phoneIsPlaceholder: false,
+      loginMethod,
+      status: 'PENDING',
+      workforceRole: role,
     });
-  } else {
-    user.loginMethod = 'email';
-    if (!user.email) user.email = normalizedEmail;
-    applyClientWorkforceRole(user, options.workforceRole);
+  } catch (err) {
+    const dup = isDuplicateKeyError(err);
+    if (dup?.field === 'phone') {
+      return { success: false, message: 'This phone number is already registered. Please login using this number instead.', errorCode: 'PHONE_ALREADY_REGISTERED', statusCode: 409, next: 'LOGIN' };
+    }
+    if (dup?.field === 'email') {
+      return { success: false, message: 'This email address is already registered. Please login using this email instead.', errorCode: 'EMAIL_ALREADY_REGISTERED', statusCode: 409, next: 'LOGIN' };
+    }
+    if (dup) {
+      return { success: false, message: 'This account is already registered. Please login instead.', errorCode: 'PHONE_AND_EMAIL_ALREADY_REGISTERED', statusCode: 409, next: 'LOGIN' };
+    }
+    logger.error('[PickerAuth] Registration create failed', { err: (err as Error)?.message });
+    return { success: false, message: 'Unable to create account. Please try again.', errorCode: 'SERVER_ERROR', statusCode: 500 };
   }
 
-  return finalizeLogin(user, isNewUser);
-}
-
-// ─── Shared login tail ────────────────────────────────────────────────────────
-
-/**
- * Issues the session and routing hint, refusing suspended accounts up front
- * rather than handing out a token that `authenticatePicker` rejects on the next call.
- */
-async function finalizeLogin(user: any, isNewUser: boolean): Promise<PickerAuthResult> {
-  if (String(user.status).toUpperCase() === 'SUSPENDED') {
-    await user.save();
-    return { success: false, message: 'Your account has been suspended. Please contact support.', errorCode: 'ACCOUNT_SUSPENDED', statusCode: 403 };
+  try {
+    const count = await PickerOnboardingApplication.countDocuments();
+    await PickerOnboardingApplication.create({
+      applicationId: `SL-RA-${2000 + count + 1}`,
+      pickerId: user._id,
+      status: 'draft',
+      stepsAtSubmission: {},
+    });
+  } catch (err) {
+    logger.warn('[PickerAuth] Onboarding application create failed (non-fatal)', { err: (err as Error)?.message, pickerId: String(user._id) });
   }
 
-  const { token, expiresAt } = await issueSession(user);
-  const { user: dto, nextScreen } = await buildAuthUserDto(user);
-  return { success: true, message: 'OTP verified', token, expiresAt, isNewUser, user: dto, nextScreen };
+  return finalizeLogin(user, true);
 }
 
-// ─── Session lifecycle ────────────────────────────────────────────────────────
-
-/**
- * Clears `sessionToken`, which invalidates every outstanding JWT for the rider
- * because `authenticatePicker` compares the token's `sid` against it.
- */
 export async function logout(pickerId: string): Promise<{ loggedOut: boolean }> {
-  await PickerUser.updateOne(
-    { _id: pickerId },
-    { $set: { sessionToken: null, isOnline: false, onlineSince: null } },
-  );
+  await PickerUser.updateOne({ _id: pickerId }, { $set: { sessionToken: null, isOnline: false, onlineSince: null } });
   return { loggedOut: true };
 }
 
-export async function refreshSession(pickerId: string): Promise<PickerAuthResult> {
+export async function refreshSession(
+  pickerId: string,
+  options: { workforceRole?: WorkforceRole } = {},
+): Promise<PickerAuthResult> {
+  const missingClient = requireClientRole(options.workforceRole);
+  if (missingClient) return missingClient;
+  const role = options.workforceRole!;
   const user = await PickerUser.findById(pickerId);
   if (!user) return { success: false, message: 'User not found.', errorCode: 'AUTH_TOKEN_INVALID', statusCode: 401 };
-
-  if (String(user.status).toUpperCase() === 'SUSPENDED') {
-    return { success: false, message: 'Your account has been suspended. Please contact support.', errorCode: 'ACCOUNT_SUSPENDED', statusCode: 403 };
-  }
-
+  const mismatch = assertWorkforceRole(user, role);
+  if (mismatch) return mismatch;
+  sanitizeUserStatus(user);
+  const gate = loginStatusGate(String(user.status), role);
+  if (gate && BLOCKED_LOGIN_CODES.has(gate.errorCode || '')) return gate;
+  applyClientWorkforceRole(user, role);
   const { token, expiresAt } = await issueSession(user);
   const { user: dto, nextScreen } = await buildAuthUserDto(user);
   return { success: true, message: 'Token refreshed', token, expiresAt, user: dto, nextScreen };
 }
 
-export { buildToken, normalizePhone, normalizeEmail, JWT_SECRET as PICKER_JWT_SECRET, parseWorkforceRole };
+export { buildToken, parseWorkforceRole, effectiveWorkforceRole };

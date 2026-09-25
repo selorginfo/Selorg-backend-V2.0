@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../utils/AppError';
 import { pickerConfig } from '../picker/picker.config';
+import { invalidateSalaryConfigCache } from '../picker/picker.salary';
 import { AdminPickerConfig, ADMIN_PICKER_CONFIG_KEY, IAdminPickerConfig } from './admin-picker-config.model';
 
 type NumericField =
@@ -10,12 +11,17 @@ type NumericField =
   | 'payoutBase' | 'payoutPerKm' | 'minutesPerKm' | 'minutesPerStopBuffer' | 'bulkStopPayout' | 'bulkBatchBasePayout'
   | 'estimatedReviewHours' | 'autoApproveAfterMs' | 'minRatedTripsForRating'
   | 'payoutWeekday' | 'maxUploadBytes' | 'geofenceMeters' | 'minWithdrawal' | 'overtimeMultiplier'
-  | 'payoutDayOfMonth' | 'defaultShiftMinutes' | 'defaultHourlyRate';
+  | 'payoutDayOfMonth' | 'defaultShiftMinutes' | 'defaultHourlyRate'
+  | 'monthlySalary' | 'standardShiftMinutes' | 'productiveWorkMinutes' | 'breakMinutes'
+  | 'startHandoverMinutes' | 'endHandoverMinutes' | 'weekOffAllowance' | 'weekOffWeekday'
+  | 'monthlyWorkingDaysFixed';
 
 type StringField =
   | 'supportPhone' | 'supportEmail' | 'supportHours' | 'minSupportedVersion' | 'latestVersion' | 'payoutScheduleLabel';
 
 type BooleanField = 'bulkDeliveryEnabled' | 'emailLoginEnabled';
+
+type ModeField = 'monthlyWorkingDaysMode';
 
 const NUMERIC_BOUNDS: Record<NumericField, { min: number; max: number; integer?: boolean }> = {
   otpLength: { min: 4, max: 8, integer: true },
@@ -45,6 +51,15 @@ const NUMERIC_BOUNDS: Record<NumericField, { min: number; max: number; integer?:
   payoutDayOfMonth: { min: 1, max: 28, integer: true },
   defaultShiftMinutes: { min: 1, max: 1440, integer: true },
   defaultHourlyRate: { min: 0, max: 100000 },
+  monthlySalary: { min: 0, max: 10000000 },
+  standardShiftMinutes: { min: 1, max: 1440, integer: true },
+  productiveWorkMinutes: { min: 0, max: 1440, integer: true },
+  breakMinutes: { min: 0, max: 1440, integer: true },
+  startHandoverMinutes: { min: 0, max: 240, integer: true },
+  endHandoverMinutes: { min: 0, max: 240, integer: true },
+  weekOffAllowance: { min: 0, max: 15, integer: true },
+  weekOffWeekday: { min: 0, max: 6, integer: true },
+  monthlyWorkingDaysFixed: { min: 1, max: 31, integer: true },
 };
 
 const STRING_FIELDS: readonly StringField[] = [
@@ -55,7 +70,9 @@ const BOOLEAN_FIELDS: readonly BooleanField[] = ['bulkDeliveryEnabled', 'emailLo
 
 type PickerConfigPayload = Record<NumericField, number> &
   Record<StringField, string> &
-  Record<BooleanField, boolean> & { updateUrl: string | null };
+  Record<BooleanField, boolean> &
+  Record<ModeField, 'calendar_minus_weekoffs' | 'fixed'> &
+  { updateUrl: string | null };
 
 /** Env-driven defaults from picker.config.ts — the fallback whenever a field was never overridden. */
 function envDefaults(): PickerConfigPayload {
@@ -96,6 +113,16 @@ function envDefaults(): PickerConfigPayload {
     payoutDayOfMonth: pickerConfig.payoutDayOfMonth,
     defaultShiftMinutes: pickerConfig.defaultShiftMinutes,
     defaultHourlyRate: pickerConfig.defaultHourlyRate,
+    monthlySalary: pickerConfig.monthlySalary,
+    standardShiftMinutes: pickerConfig.standardShiftMinutes,
+    productiveWorkMinutes: pickerConfig.productiveWorkMinutes,
+    breakMinutes: pickerConfig.breakMinutes,
+    startHandoverMinutes: pickerConfig.startHandoverMinutes,
+    endHandoverMinutes: pickerConfig.endHandoverMinutes,
+    weekOffAllowance: pickerConfig.weekOffAllowance,
+    weekOffWeekday: pickerConfig.weekOffWeekday,
+    monthlyWorkingDaysMode: pickerConfig.monthlyWorkingDaysMode,
+    monthlyWorkingDaysFixed: pickerConfig.monthlyWorkingDaysFixed,
   };
 }
 
@@ -167,6 +194,14 @@ export async function updatePickerConfig(req: Request, res: Response, next: Next
       else throw AppError.badRequest(`${field} must be a boolean`);
     }
 
+    if (body.monthlyWorkingDaysMode !== undefined) {
+      const mode = String(body.monthlyWorkingDaysMode);
+      if (mode !== 'calendar_minus_weekoffs' && mode !== 'fixed') {
+        throw AppError.badRequest('monthlyWorkingDaysMode must be calendar_minus_weekoffs or fixed');
+      }
+      update.monthlyWorkingDaysMode = mode;
+    }
+
     if (body.updateUrl !== undefined) {
       const raw = body.updateUrl;
       if (raw === null || String(raw).trim() === '') {
@@ -189,6 +224,8 @@ export async function updatePickerConfig(req: Request, res: Response, next: Next
       { $set: update, $setOnInsert: { key: ADMIN_PICKER_CONFIG_KEY } },
       { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true },
     ).lean();
+
+    invalidateSalaryConfigCache();
 
     res.status(200).json({ success: true, data: shape((doc ?? {}) as Record<string, unknown>) });
   } catch (error) {

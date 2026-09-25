@@ -75,12 +75,45 @@ export const pickerConfig = {
   /** Workforce-app geofence; frontend `config.geofenceMeters` is 150. */
   get geofenceMeters() { return num('PICKER_GEOFENCE_METERS', 150); },
   get minWithdrawal() { return num('PICKER_MIN_WITHDRAWAL', 100); },
-  /** Overtime multiplier applied to the shift hourly rate. */
+  /** Overtime multiplier applied to the normal hourly salary rate. */
   get overtimeMultiplier() { return num('PICKER_OT_MULTIPLIER', 1.5); },
   /** Day of month net payout lands (mock uses the 5th). */
   get payoutDayOfMonth() { return num('PICKER_PAYOUT_DAY_OF_MONTH', 5); },
-  get defaultShiftMinutes() { return num('PICKER_DEFAULT_SHIFT_MINUTES', 9 * 60); },
+  /**
+   * Fallback scheduled minutes when a shift has no start/end times.
+   * Aligned to the standard 10-hour picker shift (work + break + handovers).
+   */
+  get defaultShiftMinutes() { return num('PICKER_DEFAULT_SHIFT_MINUTES', 10 * 60); },
+  /** Legacy hourly fallback — salary payroll uses monthlySalary instead. */
   get defaultHourlyRate() { return num('PICKER_DEFAULT_HOURLY_RATE', 100); },
+
+  // ─── Monthly salary / shift structure (single source for payroll) ─────────
+  /** Fixed monthly salary (₹). Overridable via AdminPickerConfig.monthlySalary. */
+  get monthlySalary() { return num('PICKER_MONTHLY_SALARY', 13000); },
+  /** Full scheduled shift including break + handovers (minutes). Default 10h. */
+  get standardShiftMinutes() { return num('PICKER_STANDARD_SHIFT_MINUTES', 10 * 60); },
+  /** Productive picking time inside the shift (minutes). Default 8h. */
+  get productiveWorkMinutes() { return num('PICKER_PRODUCTIVE_WORK_MINUTES', 8 * 60); },
+  /** Paid break inside the shift — not productive, not OT (minutes). Default 1h. */
+  get breakMinutes() { return num('PICKER_BREAK_MINUTES', 60); },
+  /** Device assignment / start handover — not productive, not OT (minutes). */
+  get startHandoverMinutes() { return num('PICKER_START_HANDOVER_MINUTES', 30); },
+  /** End-of-shift handover — not productive, not OT (minutes). */
+  get endHandoverMinutes() { return num('PICKER_END_HANDOVER_MINUTES', 30); },
+  /** Paid week-offs granted per month (non-deductible). */
+  get weekOffAllowance() { return num('PICKER_WEEK_OFF_ALLOWANCE', 4); },
+  /** Weekday used as the weekly off: 0=Sun … 6=Sat. Default Sunday. */
+  get weekOffWeekday() { return num('PICKER_WEEK_OFF_WEEKDAY', 0); },
+  /**
+   * Daily-rate divisor mode:
+   * - calendar_minus_weekoffs → daysInMonth − weekOffAllowance
+   * - fixed → monthlyWorkingDaysFixed
+   */
+  get monthlyWorkingDaysMode(): 'calendar_minus_weekoffs' | 'fixed' {
+    const v = str('PICKER_MONTHLY_WORKING_DAYS_MODE', 'calendar_minus_weekoffs');
+    return v === 'fixed' ? 'fixed' : 'calendar_minus_weekoffs';
+  },
+  get monthlyWorkingDaysFixed() { return num('PICKER_MONTHLY_WORKING_DAYS_FIXED', 26); },
 };
 
 export const PICKER_LANGUAGE_CATALOG = [

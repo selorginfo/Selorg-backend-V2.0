@@ -39,7 +39,13 @@ function mapRiderStatus(raw: unknown): string | null {
 
 export async function listRiders(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const riders = await PickerUser.find({}).sort({ createdAt: -1 }).limit(200).lean();
+    const riders = await PickerUser.find({
+      $or: [
+        { workforceRole: 'rider' },
+        { workforceRole: { $exists: false } },
+        { workforceRole: null },
+      ],
+    }).sort({ createdAt: -1 }).limit(200).lean();
     const data = (riders as RiderDoc[]).map((r) => ({
       id: String(r._id),
       name: r.name ?? '',
@@ -60,6 +66,9 @@ export async function getRiderById(req: Request, res: Response, next: NextFuncti
     }
     const rider = (await PickerUser.findById(id).lean()) as RiderDoc | null;
     if (!rider) {
+      throw AppError.notFound('Rider', id);
+    }
+    if (rider.workforceRole === 'picker') {
       throw AppError.notFound('Rider', id);
     }
     res.status(200).json({
