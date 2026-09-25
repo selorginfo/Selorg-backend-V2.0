@@ -718,6 +718,12 @@ export async function getAttendanceStats(req: Request, res: Response, next: Next
   } catch (err) { next(err); }
 }
 
+export async function getMonthlySalary(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    res.json(ResponseFormatter.success(await appService.getMonthlySalarySummary(requirePickerId(req), req.query.month as string)));
+  } catch (err) { next(err); }
+}
+
 // â”€â”€â”€ Wallet extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function getWalletBalance(req: Request, res: Response, next: NextFunction): Promise<void> {

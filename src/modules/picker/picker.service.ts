@@ -150,24 +150,41 @@ export async function punchOut(userId: string, location?: Record<string, unknown
   if (!attendance) throw Object.assign(new Error('Not punched in'), { statusCode: 400 });
   attendance.punchOut = new Date();
   attendance.locationOut = location;
-  const worked = Math.floor((attendance.punchOut.getTime() - attendance.punchIn.getTime()) / 60000);
-  const breakTime = attendance.breaks.reduce((s: number, b: any) => s + (b.endTime ? Math.floor((b.endTime.getTime() - b.startTime.getTime()) / 60000) : 0), 0);
-  attendance.totalWorkedMinutes = Math.max(0, worked - breakTime);
-  let scheduled = 9 * 60;
-  if (attendance.shiftId && mongoose.isValidObjectId(String(attendance.shiftId))) {
-    const shift = await PickerShift.findById(attendance.shiftId).select('startTime endTime').lean() as { startTime?: string; endTime?: string } | null;
-    const parse = (v?: string) => {
-      const m = v ? /^(\d{1,2}):(\d{2})/.exec(v) : null;
-      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-    };
-    const start = parse(shift?.startTime);
-    const end = parse(shift?.endTime);
-    if (start != null && end != null) scheduled = end > start ? end - start : end + 24 * 60 - start;
-  }
-  attendance.overtimeMinutes = Math.max(0, attendance.totalWorkedMinutes - scheduled);
-  attendance.overtimeHours = Math.round((attendance.overtimeMinutes / 60) * 10) / 10;
-  attendance.regularHours = Math.round(((attendance.totalWorkedMinutes - attendance.overtimeMinutes) / 60) * 10) / 10;
-  attendance.status = attendance.totalWorkedMinutes < scheduled * 0.5 ? 'half-day' : 'present';
+
+  const {
+    resolveSalaryConfig,
+    computeShiftBreakdown,
+    hubYearMonth,
+    isWeekOffDateKey,
+  } = await import('./picker.salary');
+  const { hubDateKey } = await import('./picker.format');
+
+  const cfg = await resolveSalaryConfig();
+  const punchIn = new Date(attendance.punchIn);
+  const { year, monthIndex0 } = hubYearMonth(punchIn);
+  const weekOff = isWeekOffDateKey(hubDateKey(punchIn), cfg, year, monthIndex0);
+  const breakdown = computeShiftBreakdown({
+    punchIn,
+    punchOut: attendance.punchOut,
+    breaks: attendance.breaks as Array<{ startTime: Date; endTime?: Date }>,
+    cfg,
+    isWeekOffDay: weekOff,
+  });
+
+  attendance.totalShiftMinutes = breakdown.totalShiftMinutes;
+  attendance.startHandoverMinutes = breakdown.startHandoverMinutes;
+  attendance.endHandoverMinutes = breakdown.endHandoverMinutes;
+  attendance.breakMinutes = breakdown.breakMinutes;
+  attendance.productiveWorkMinutes = breakdown.productiveWorkMinutes;
+  attendance.actualWorkStartTime = breakdown.actualWorkStartTime;
+  attendance.actualWorkEndTime = breakdown.actualWorkEndTime || undefined;
+  attendance.isWeekOffWork = breakdown.isWeekOffWork;
+  attendance.totalWorkedMinutes = breakdown.productiveWorkMinutes;
+  attendance.overtimeMinutes = breakdown.overtimeMinutes;
+  attendance.overtimeHours = Math.round((breakdown.overtimeMinutes / 60) * 10) / 10;
+  const regularMins = Math.max(0, breakdown.totalShiftMinutes - breakdown.overtimeMinutes);
+  attendance.regularHours = Math.round((regularMins / 60) * 10) / 10;
+  attendance.status = breakdown.totalShiftMinutes < cfg.standardShiftMinutes * 0.5 ? 'half-day' : 'present';
   await attendance.save();
   return attendance;
 }

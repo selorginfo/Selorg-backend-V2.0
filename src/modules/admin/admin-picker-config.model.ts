@@ -57,6 +57,18 @@ export interface IAdminPickerConfig extends Document {
   defaultShiftMinutes: number;
   defaultHourlyRate: number;
 
+  /** Picker monthly salary (₹) — single admin-editable source. */
+  monthlySalary: number;
+  standardShiftMinutes: number;
+  productiveWorkMinutes: number;
+  breakMinutes: number;
+  startHandoverMinutes: number;
+  endHandoverMinutes: number;
+  weekOffAllowance: number;
+  weekOffWeekday: number;
+  monthlyWorkingDaysMode: 'calendar_minus_weekoffs' | 'fixed';
+  monthlyWorkingDaysFixed: number;
+
   updatedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -111,6 +123,17 @@ const adminPickerConfigSchema = new Schema<IAdminPickerConfig>(
     payoutDayOfMonth: { type: Number, min: 1, max: 28 },
     defaultShiftMinutes: { type: Number, min: 1 },
     defaultHourlyRate: { type: Number, min: 0 },
+
+    monthlySalary: { type: Number, min: 0 },
+    standardShiftMinutes: { type: Number, min: 1 },
+    productiveWorkMinutes: { type: Number, min: 0 },
+    breakMinutes: { type: Number, min: 0 },
+    startHandoverMinutes: { type: Number, min: 0 },
+    endHandoverMinutes: { type: Number, min: 0 },
+    weekOffAllowance: { type: Number, min: 0 },
+    weekOffWeekday: { type: Number, min: 0, max: 6 },
+    monthlyWorkingDaysMode: { type: String, enum: ['calendar_minus_weekoffs', 'fixed'] },
+    monthlyWorkingDaysFixed: { type: Number, min: 1 },
 
     updatedBy: { type: String, default: null },
   },

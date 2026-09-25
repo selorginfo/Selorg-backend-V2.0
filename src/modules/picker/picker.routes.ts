@@ -72,6 +72,7 @@ router.post('/shifts/break/end', ...active, ctrl.endBreak);
 // â”€â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/attendance/summary', ...authed, validate(v.attendanceQuerySchema, 'query'), ctrl.getAttendanceSummary);
 router.get('/attendance/stats', ...authed, validate(v.attendanceQuerySchema, 'query'), ctrl.getAttendanceStats);
+router.get('/salary/monthly', ...pickerAuthed, validate(v.attendanceQuerySchema, 'query'), ctrl.getMonthlySalary);
 router.post('/attendance/punch-in', ...active, ctrl.punchIn);
 router.post('/attendance/punch-out', ...active, ctrl.punchOut);
 router.get('/attendance', ...authed, validate(v.attendanceQuerySchema, 'query'), ctrl.getAttendance);

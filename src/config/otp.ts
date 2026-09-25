@@ -16,8 +16,13 @@ export interface OtpConfig {
 }
 
 export function loadOtpConfig(): OtpConfig {
-  const envDevTrue = process.env.OTP_DEV_MODE === '1' || process.env.OTP_DEV_MODE === 'true';
-  const envDevFalse = process.env.OTP_DEV_MODE === '0' || process.env.OTP_DEV_MODE === 'false';
+  // Accept True/False/TRUE etc. — Windows .env often uses capitalised booleans.
+  const rawDev = String(process.env.OTP_DEV_MODE || '')
+    .trim()
+    .toLowerCase();
+  const envDevTrue = rawDev === '1' || rawDev === 'true';
+  const envDevFalse = rawDev === '0' || rawDev === 'false';
+  // Explicit False must win. Only fall back to NODE_ENV when the var is unset.
   const otpDevMode = envDevTrue ? true : envDevFalse ? false : process.env.NODE_ENV === 'development';
 
   let paramMobile = (process.env.SMS_PARAM_MOBILE || 'to_mobileno').trim();

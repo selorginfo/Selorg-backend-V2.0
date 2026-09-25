@@ -82,6 +82,12 @@ function resolveEmailFrom(role?: WorkforceRole | null): string | undefined {
 }
 
 function resolvePhoneOtpTemplate(role: WorkforceRole, channel: string): string | null {
+  // Indian DLT gateways (SpearUC via SMS_VENDOR_URL) reject any text that does not
+  // match the registered template exactly. Brand copy in PICKER_/RIDER_OTP_SMS_MESSAGE
+  // must not override SMS_MESSAGE_TEMPLATE for SMS.
+  if (channel === 'sms' && (process.env.SMS_VENDOR_URL || '').trim()) {
+    return process.env.SMS_MESSAGE_TEMPLATE || null;
+  }
   if (role === 'picker') {
     if (channel === 'whatsapp') {
       return process.env.PICKER_OTP_WHATSAPP_MESSAGE || process.env.PICKER_OTP_SMS_MESSAGE || null;
@@ -149,8 +155,13 @@ export interface PickerAuthResult {
   emailRegistered?: boolean;
 }
 
+/**
+ * Only OTP_DEV_MODE may accept a failed provider send (console OTP still logged).
+ * Non-production alone must NOT fake success — that left the app on the OTP
+ * screen with no SMS delivered (SpearUC / Twilio outages looked like "sent").
+ */
 function otpDevFallback(): boolean {
-  return Boolean((appConfig as any).otp?.devMode) || !appConfig.isProduction;
+  return Boolean((appConfig as { otp?: { devMode?: boolean } }).otp?.devMode);
 }
 
 export function normalizePhone(phone: unknown): string | null {

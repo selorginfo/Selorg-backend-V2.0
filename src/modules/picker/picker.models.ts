@@ -429,6 +429,20 @@ export interface IPickerAttendance extends Document {
   lateByMinutes: number;
   overtimeMinutes: number;
   totalWorkedMinutes: number;
+  /** Wall-clock punchOut − punchIn (includes break + handovers). */
+  totalShiftMinutes?: number;
+  /** Configured / applied start handover minutes (not productive). */
+  startHandoverMinutes?: number;
+  /** Configured / applied end handover minutes (not productive). */
+  endHandoverMinutes?: number;
+  /** Break minutes (logged or configured). */
+  breakMinutes?: number;
+  /** Productive work = totalShift − break − handovers. */
+  productiveWorkMinutes?: number;
+  actualWorkStartTime?: Date;
+  actualWorkEndTime?: Date;
+  /** True when this attendance falls on a scheduled week-off day. */
+  isWeekOffWork?: boolean;
   ordersCompleted?: number;
   regularHours?: number;
   overtimeHours?: number;
@@ -450,6 +464,14 @@ const PickerAttendanceSchema = new Schema<IPickerAttendance>(
     lateByMinutes: { type: Number, default: 0 },
     overtimeMinutes: { type: Number, default: 0 },
     totalWorkedMinutes: { type: Number, default: 0 },
+    totalShiftMinutes: { type: Number, default: 0 },
+    startHandoverMinutes: { type: Number, default: 0 },
+    endHandoverMinutes: { type: Number, default: 0 },
+    breakMinutes: { type: Number, default: 0 },
+    productiveWorkMinutes: { type: Number, default: 0 },
+    actualWorkStartTime: { type: Date },
+    actualWorkEndTime: { type: Date },
+    isWeekOffWork: { type: Boolean, default: false },
     ordersCompleted: { type: Number },
     regularHours: { type: Number },
     overtimeHours: { type: Number },
