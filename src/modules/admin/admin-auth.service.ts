@@ -31,7 +31,7 @@ export async function login(email: string, password: string, requestedRole = 'ad
     .trim()
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ');
-  if (requestedRole && user.role) {
+  if (requestedRole) {
     // Treat backend admin roles and Admin SPA console role labels as equivalent for login.
     // The SPA sends display labels like "Operations Admin" / "Super Admin"; the users
     // collection typically stores `admin` / `super_admin` / `darkstore`.
@@ -72,6 +72,10 @@ export async function login(email: string, password: string, requestedRole = 'ad
 
   const ok = await bcrypt.compare(password, user.password);
   if (!ok) return null;
+
+  if (!user.role || !String(user.role).trim()) {
+    throw AppError.forbidden('This account has no role assigned. Contact an administrator.');
+  }
 
   let permissions: string[] = [];
   const directoryUser = await repo.findDirectoryUserByEmail(normalizedEmail);

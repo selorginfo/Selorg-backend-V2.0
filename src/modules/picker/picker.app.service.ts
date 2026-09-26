@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import mongoose from 'mongoose';
 import {
   PickerUser, PickerDocument, PickerWorkLocation, PickerShift, PickerShiftAssignment,
@@ -23,7 +22,14 @@ import {
   isWeekOffDateKey,
   roundRate,
 } from './picker.salary';
-import { sendOtpSms } from '../../services/sms.service';
+import {
+  ensureDarkstoreDeviceOtp,
+  ensurePickerDeviceOtp,
+  findDeviceByCollectionOtp,
+  pickerStoreKeys,
+  resolveCollectableDevice,
+  rotateDeviceOtp,
+} from './hsd-collection-otp';
 import { storePickerUpload } from './picker.upload.service';
 import * as shiftService from './picker.shift.service';
 import * as supportService from './picker.support.service';
@@ -731,19 +737,18 @@ export async function submitFaceVerification(pickerId: string, imageUrl?: string
 export async function requestManagerOtp(pickerId: string) {
   const user = await PickerUser.findById(pickerId);
   if (!user) throw AppError.notFound('User');
-  const otp = String(crypto.randomInt(0, 10 ** pickerConfig.otpLength)).padStart(pickerConfig.otpLength, '0');
-  user.locationOtp = otp;
-  user.locationOtpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
-  user.locationOtpAttempts = 0;
-  user.locationOtpForLocationId = user.currentLocationId || null;
-  await user.save();
-
-  const managerPhone = process.env.PICKER_MANAGER_PHONE;
-  const dest = (managerPhone || (!user.phoneIsPlaceholder ? user.phone : '') || '').replace(/\D/g, '').slice(-10);
-  if (dest.length === 10) {
-    await sendOtpSms(`+91${dest}`, otp, 5);
+  const device = await resolveCollectableDevice(user);
+  if (!device) {
+    throw AppError.badRequest('No HSD device is registered at your dark store. Ask the manager to add one.');
   }
-  return { sent: true };
+  const deviceId = 'deviceId' in device && device.deviceId ? device.deviceId : String((device as { device_id?: string }).device_id || '');
+  const otp = 'deviceId' in device && device.deviceId
+    ? await ensurePickerDeviceOtp(deviceId)
+    : await ensureDarkstoreDeviceOtp(deviceId);
+  user.locationOtpAttempts = 0;
+  user.locationOtpForLocationId = deviceId;
+  await user.save();
+  return { sent: true, deviceId, otpReady: Boolean(otp) };
 }
 
 export async function verifyManagerOtp(pickerId: string, otpRaw?: string) {
@@ -751,25 +756,22 @@ export async function verifyManagerOtp(pickerId: string, otpRaw?: string) {
   if (!/^\d{4}$/.test(otp)) throw AppError.badRequest('Enter a valid 4-digit OTP');
   const user = await PickerUser.findById(pickerId);
   if (!user) throw AppError.notFound('User');
-  if (!user.locationOtp || !user.locationOtpExpiresAt) throw AppError.badRequest('No OTP has been requested');
-  if (user.locationOtpExpiresAt.getTime() < Date.now()) {
-    throw AppError.badRequest('OTP has expired. Please request a new one.');
-  }
   const attempts = (user.locationOtpAttempts || 0) + 1;
   user.locationOtpAttempts = attempts;
   if (attempts > pickerConfig.otpMaxVerifyAttempts) {
     await user.save();
-    throw AppError.badRequest('Too many attempts. Please request a new OTP.');
+    throw AppError.badRequest('Too many attempts. Ask your dark store manager for the device OTP.');
   }
-  if (user.locationOtp !== otp) {
+  const match = await findDeviceByCollectionOtp(otp, pickerStoreKeys(user));
+  if (!match) {
     await user.save();
-    throw AppError.badRequest('Invalid OTP. Please try again.');
+    throw AppError.badRequest('Invalid OTP. Ask your dark store manager for the code on this HSD device.');
   }
-  user.locationOtp = undefined;
-  user.locationOtpExpiresAt = undefined;
   user.locationOtpAttempts = 0;
+  user.deviceCollectionVerifiedAt = new Date();
+  user.deviceCollectionVerifiedId = match.deviceId;
   await user.save();
-  return { verified: true };
+  return { verified: true, deviceId: match.deviceId };
 }
 
 export async function confirmDeviceCollection(pickerId: string, deviceIdRaw?: string) {
@@ -781,36 +783,46 @@ export async function confirmDeviceCollection(pickerId: string, deviceIdRaw?: st
       return { acknowledged: true, deviceId: existing.deviceId };
     }
   }
-  let device = deviceIdRaw
-    ? await PickerDevice.findOne({ deviceId: deviceIdRaw })
-    : await PickerDevice.findOne({ assignedTo: oid(pickerId), status: 'assigned' });
+  const verifiedAt = user.deviceCollectionVerifiedAt ? new Date(user.deviceCollectionVerifiedAt).getTime() : 0;
+  const verifiedFresh = verifiedAt > 0 && Date.now() - verifiedAt < 10 * 60 * 1000;
+  if (!verifiedFresh || !user.deviceCollectionVerifiedId) {
+    throw AppError.badRequest('Enter the HSD collection OTP from your dark store manager before starting your shift.');
+  }
+  const verifiedDeviceId = user.deviceCollectionVerifiedId;
+  if (deviceIdRaw && deviceIdRaw !== verifiedDeviceId) {
+    throw AppError.badRequest('That device does not match the OTP from your dark store manager.');
+  }
+  let device = await PickerDevice.findOne({ deviceId: verifiedDeviceId });
   if (device && device.status === 'assigned' && device.assignedTo && String(device.assignedTo) !== String(pickerId)) {
     throw new AppError('This HSD device is already assigned to another picker.', 409, 'DEVICE_ALREADY_ASSIGNED');
   }
   if (!device) {
-    device = await PickerDevice.findOne({
-      status: 'available',
-      ...(user.currentLocationId ? { warehouseKey: user.currentLocationId } : {}),
-    });
+    const { DarkstoreDevice } = await import('../darkstore/darkstore.models');
+    const dark = await DarkstoreDevice.findOne({ device_id: verifiedDeviceId });
+    if (!dark) throw AppError.badRequest('The HSD device for this OTP is no longer available.');
+    if (dark.status === 'assigned' && dark.assigned_to && dark.assigned_to !== String(pickerId)) {
+      throw new AppError('This HSD device is already assigned to another picker.', 409, 'DEVICE_ALREADY_ASSIGNED');
+    }
+    dark.status = 'assigned';
+    dark.assigned_to = String(pickerId);
+    await dark.save();
+    user.activeDeviceId = verifiedDeviceId;
+    user.deviceCollectionVerifiedAt = undefined;
+    user.deviceCollectionVerifiedId = undefined;
+    await user.save();
+    await rotateDeviceOtp(verifiedDeviceId);
+    await markOnboardingStep(pickerId, 8);
+    return { acknowledged: true, deviceId: verifiedDeviceId };
   }
-  if (!device) {
-    device = await PickerDevice.create({
-      deviceId: `HHD-${String(user._id).slice(-4).toUpperCase()}`,
-      type: 'HHD',
-      deviceModel: 'Zebra TC21',
-      assignedTo: user._id,
-      status: 'assigned',
-      assignedAt: new Date(),
-      warehouseKey: user.currentLocationId,
-    });
-  } else {
-    device.assignedTo = user._id as mongoose.Types.ObjectId;
-    device.status = 'assigned';
-    device.assignedAt = new Date();
-    await device.save();
-  }
+  device.assignedTo = user._id as mongoose.Types.ObjectId;
+  device.status = 'assigned';
+  device.assignedAt = new Date();
+  await device.save();
   user.activeDeviceId = device.deviceId;
+  user.deviceCollectionVerifiedAt = undefined;
+  user.deviceCollectionVerifiedId = undefined;
   await user.save();
+  await rotateDeviceOtp(device.deviceId);
   await markOnboardingStep(pickerId, 8);
   return { acknowledged: true, deviceId: device.deviceId };
 }
@@ -1025,6 +1037,10 @@ async function creditShiftEarnings(pickerId: string, attendance: any) {
 }
 
 export async function startAppShift(pickerId: string, shiftId?: string, body?: Record<string, unknown>) {
+  const holder = await PickerUser.findById(pickerId).select('activeDeviceId').lean() as { activeDeviceId?: string | null } | null;
+  if (!holder?.activeDeviceId) {
+    throw AppError.badRequest('Collect your HSD device and enter the manager OTP before starting your shift.');
+  }
   const location = readCoords(body);
   let resolved = shiftId;
   if (!resolved || !mongoose.isValidObjectId(resolved)) {
@@ -1060,6 +1076,10 @@ export async function endAppShift(pickerId: string, shiftId?: string, body?: Rec
 }
 
 export async function punchInApp(pickerId: string, body: Record<string, unknown> = {}) {
+  const holder = await PickerUser.findById(pickerId).select('activeDeviceId').lean() as { activeDeviceId?: string | null } | null;
+  if (!holder?.activeDeviceId) {
+    throw AppError.badRequest('Collect your HSD device and enter the manager OTP before starting your shift.');
+  }
   const location = readCoords(body);
   const user = await PickerUser.findById(pickerId).select('currentLocationId').lean() as any;
   const assignment = await resolveTodaysAssignment(pickerId);

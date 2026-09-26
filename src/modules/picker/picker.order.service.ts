@@ -208,6 +208,7 @@ export async function listAvailableOrders(
   }
 
   const mineFilter = { pickerId: userId, riderStage: { $in: ['accepted', 'picked_up'] } };
+  const now = new Date();
   const availableFilter = {
     pickerId: null,
     riderStage: 'offered',
@@ -215,7 +216,15 @@ export async function listAvailableOrders(
     deliveryType: user.deliveryMode === 'bulk' ? 'bulk' : 'standard',
     $and: [
       riderHubClause(riderHubKey),
-      { $or: [{ offerExpiresAt: null }, { offerExpiresAt: { $gt: new Date() } }] },
+      {
+        $or: [
+          { offeredRiderId: null },
+          { offeredRiderId: { $exists: false } },
+          { offeredRiderId: '' },
+          { offeredRiderId: pickerId },
+          { offerExpiresAt: { $lte: now } },
+        ],
+      },
     ],
   };
 
@@ -394,7 +403,7 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
   const user = (await PickerUser.findById(pickerId).select('isOnline status currentLocationId').lean()) as any;
   if (!user?.isOnline) throw new AppError('Go online before accepting orders.', 403, 'RIDER_OFFLINE');
 
-  const existing = await Order.findById(orderId).select('pickerId riderStage status orderNumber offerHubKey distanceKm deliveryAddress').lean();
+  const existing = await Order.findById(orderId).select('pickerId riderStage status orderNumber offerHubKey offeredRiderId offerExpiresAt distanceKm deliveryAddress').lean();
   if (!existing) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
   if ((existing as any).status === 'cancelled') {
     throw new AppError('This order has been cancelled', 409, 'ORDER_CANCELLED');
@@ -409,6 +418,12 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
   await assertRiderFreeForNewOrder(pickerId, orderId);
   if ((existing as any).riderStage !== 'offered') {
     throw AppError.conflict('Another rider has already accepted this order.', 'ORDER_ALREADY_ASSIGNED');
+  }
+  const reservedFor = String((existing as any).offeredRiderId || '');
+  const offerExpiresAt = (existing as any).offerExpiresAt ? new Date((existing as any).offerExpiresAt) : null;
+  const reservationLive = Boolean(reservedFor) && (!offerExpiresAt || offerExpiresAt > new Date());
+  if (reservationLive && reservedFor !== pickerId) {
+    throw new AppError('This order is offered to another rider.', 409, 'OFFER_RESERVED');
   }
   if (!OFFERABLE_ORDER_STATUSES.includes((existing as any).status)) {
     throw AppError.conflict('This order is no longer available.', 'INVALID_TRANSITION');
@@ -425,11 +440,24 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
   const acceptedAt = new Date();
 
   const claimed = await Order.findOneAndUpdate(
-    { _id: orderId, pickerId: null, riderStage: 'offered', status: { $in: OFFERABLE_ORDER_STATUSES } },
+    {
+      _id: orderId,
+      pickerId: null,
+      riderStage: 'offered',
+      status: { $in: OFFERABLE_ORDER_STATUSES },
+      $or: [
+        { offeredRiderId: null },
+        { offeredRiderId: { $exists: false } },
+        { offeredRiderId: '' },
+        { offeredRiderId: pickerId },
+        { offerExpiresAt: { $lte: acceptedAt } },
+      ],
+    },
     {
       $set: {
         pickerId: userId,
         riderId: String(pickerId),
+        offeredRiderId: null,
         riderStage: 'accepted',
         fulfillmentStage: 'rider_accepted',
         acceptedAt,

@@ -55,22 +55,25 @@ export function isSelorgHttpsOrigin(origin: string): boolean {
 }
 
 export function isAllowedOrigin(origin?: string | null): boolean {
-  if (!origin || origin === 'null' || origin === '') return true;
+  // Missing origin: non-browser clients (mobile apps, server-to-server). An explicit
+  // "null" origin is a sandboxed browser page and must not be treated as trusted.
+  if (!origin) return true;
 
   const normalized = origin.trim().toLowerCase();
+  if (!normalized || normalized === 'null') return false;
 
-  if (isLocalOrigin(normalized) || isLanOrigin(normalized) || isExpoOrMobileOrigin(normalized)) {
-    return true;
-  }
-  if (isSelorgHttpsOrigin(normalized)) {
-    return true;
-  }
-  if (process.env.NODE_ENV !== 'production') {
-    return true;
+  const listed = getAllowedOrigins().map((o) => o.trim().toLowerCase()).includes(normalized);
+  if (process.env.NODE_ENV === 'production') {
+    return isSelorgHttpsOrigin(normalized) || listed;
   }
 
-  const allowed = getAllowedOrigins().map((o) => o.trim().toLowerCase());
-  return allowed.includes(normalized);
+  return (
+    isLocalOrigin(normalized) ||
+    isLanOrigin(normalized) ||
+    isExpoOrMobileOrigin(normalized) ||
+    isSelorgHttpsOrigin(normalized) ||
+    listed
+  );
 }
 
 type CorsOriginCallback = (err: Error | null, allow?: boolean | string) => void;

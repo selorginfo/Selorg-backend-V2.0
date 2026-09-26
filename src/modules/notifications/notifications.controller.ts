@@ -186,18 +186,29 @@ export async function adminSend(req: Request, res: Response, next: NextFunction)
     if (!Array.isArray(userIds) || userIds.length === 0) {
       throw AppError.badRequest('userIds array is required');
     }
+    const payload =
+      data && typeof data === 'object' && !Array.isArray(data)
+        ? (data as Record<string, unknown>)
+        : {};
     const docs = userIds.map((uid) => ({
       userId: uid,
       title,
       body,
       channel: channel || 'in_app',
       type: type || 'generic',
-      data: data || {},
+      data: payload,
       read: false,
     }));
     const created = await Notification.insertMany(docs);
     for (const doc of created) {
-      orderRealtime.publishInboxNotification(String(doc.userId), doc);
+      orderRealtime.publishInboxNotification(String(doc.userId), {
+        _id: doc._id,
+        title: doc.title,
+        body: doc.body,
+        read: doc.read,
+        data: (doc.data && typeof doc.data === 'object' ? doc.data : {}) as Record<string, unknown>,
+        createdAt: doc.createdAt,
+      });
     }
     res.status(201).json({ success: true, data: { count: created.length } });
   } catch (err) { next(err); }

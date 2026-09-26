@@ -1,6 +1,7 @@
 import type { AdminAuthUser } from '../types/express';
 import { AppError } from './AppError';
 import { normalizeRoleKey } from '../config/permissions';
+import { DarkStore } from '../modules/store/dark-store.model';
 
 /** Dashboard login roles that are limited to assigned dark store(s). */
 const STORE_SCOPED_ROLES = new Set([
@@ -114,4 +115,21 @@ export function orderStoreScopeFilter(user?: AdminAuthUser | null): Record<strin
     or.push({ storeCode: { $in: [...codes, ...upper] } });
   }
   return or.length ? { $or: or } : { _id: null };
+}
+
+/**
+ * Same as orderStoreScopeFilter, but store codes assigned to a manager are resolved
+ * to DarkStore ids so customer orders (keyed by storeId) match that store.
+ */
+export async function resolveOrderStoreScope(
+  user?: AdminAuthUser | null,
+): Promise<Record<string, unknown> | null> {
+  const base = orderStoreScopeFilter(user);
+  if (!base || !Array.isArray(base.$or)) return base;
+  const codes = getAssignedStoreKeys(user).filter((k) => !/^[a-f0-9]{24}$/i.test(k));
+  if (!codes.length) return base;
+  const wanted = [...new Set(codes.flatMap((c) => [c, c.toUpperCase()]))];
+  const stores = await DarkStore.find({ code: { $in: wanted } }).select('_id').lean();
+  if (!stores.length) return base;
+  return { $or: [...base.$or, { storeId: { $in: stores.map((s) => s._id) } }] };
 }

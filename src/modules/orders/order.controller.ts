@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../utils/AppError';
 import { ResponseFormatter } from '../../utils/response';
+import { assertAnyStoreAccess, resolveOrderStoreScope } from '../../utils/store-scope';
 import * as ordersService from './orders.service';
 import { Order } from './order.model';
 import type { CreateOrderInput, RateOrderInput, VerifyOrderOtpInput, UpdateOrderStatusInput } from './order.validation';
@@ -9,6 +10,7 @@ import {
   readCustomerIdempotencyKey,
   replayCustomerOrderIdempotency,
 } from './order.idempotency';
+import { statusCodeOf } from './order-pricing-guard';
 
 function requireCustomerId(req: Request): string {
   if (!req.customer?._id) throw AppError.unauthorized();
@@ -59,7 +61,8 @@ export async function create(req: Request, res: Response, next: NextFunction): P
     const order = await ordersService.createOrder(userId, req.body as CreateOrderInput);
     const err = errorOf(order);
     if (err) {
-      res.status(400).json(ResponseFormatter.error(err, 400));
+      const statusCode = statusCodeOf(order, 400);
+      res.status(statusCode).json(ResponseFormatter.error(err, statusCode));
       return;
     }
     if (idempotencyKey) {
@@ -222,11 +225,43 @@ export async function adminList(req: Request, res: Response, next: NextFunction)
     const page = parseInt(String(req.query.page || ''), 10) || 1;
     const limit = Math.min(parseInt(String(req.query.limit || ''), 10) || 20, 200);
     const status = (req.query.status as string) || undefined;
-    const storeId = (req.query.storeId as string) || undefined;
+    const statuses = String(req.query.statuses || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const rawStoreId = (req.query.storeId as string) || undefined;
     const riderId = (req.query.riderId as string) || undefined;
     const search = (req.query.search as string) || undefined;
     const date = (req.query.date as string) || undefined;
-    const result = await ordersService.adminListOrders(page, limit, { status, storeId, riderId, search, date });
+
+    let storeId = rawStoreId;
+    if (rawStoreId) {
+      const store = await ordersService.resolveDarkStoreKey(rawStoreId);
+      if (!store) {
+        res.status(200).json(
+          ResponseFormatter.success({
+            data: [],
+            pagination: { page, limit, total: 0, totalPages: 1 },
+          }),
+        );
+        return;
+      }
+      assertAnyStoreAccess(req.user, store.id, store.code, rawStoreId);
+      storeId = store.id;
+    }
+
+    // A chosen store is already access-checked above. Scope the unfiltered list so a
+    // store manager on the Orders page only sees orders for their dark store.
+    const scope = storeId ? null : await resolveOrderStoreScope(req.user);
+    const result = await ordersService.adminListOrders(page, limit, {
+      status,
+      statuses,
+      storeId,
+      riderId,
+      search,
+      date,
+      scope,
+    });
     res.status(200).json(ResponseFormatter.success(result));
   } catch (err) {
     next(err);
@@ -237,6 +272,11 @@ export async function adminGetDetail(req: Request, res: Response, next: NextFunc
   try {
     const order = await ordersService.adminGetOrderById(req.params.id);
     if (!order) throw AppError.notFound('Order');
+    assertAnyStoreAccess(
+      req.user,
+      order.storeId ? String(order.storeId) : undefined,
+      order.storeCode ? String(order.storeCode) : undefined,
+    );
     res.status(200).json(ResponseFormatter.success(order));
   } catch (err) {
     next(err);
@@ -245,6 +285,13 @@ export async function adminGetDetail(req: Request, res: Response, next: NextFunc
 
 export async function adminGetLogs(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const order = await ordersService.adminGetOrderById(req.params.id);
+    if (!order) throw AppError.notFound('Order');
+    assertAnyStoreAccess(
+      req.user,
+      order.storeId ? String(order.storeId) : undefined,
+      order.storeCode ? String(order.storeCode) : undefined,
+    );
     const logs = await ordersService.adminGetOrderLogs(req.params.id);
     if (!logs) throw AppError.notFound('Order');
     res.status(200).json(ResponseFormatter.success({ data: logs }));

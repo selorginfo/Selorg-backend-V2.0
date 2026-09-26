@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import * as ops from './ops-flow.service';
+import { assertAnyStoreAccess, getAssignedStoreKeys, isStoreScopedUser } from '../../utils/store-scope';
+import { resolveDarkStoreKey } from '../orders/orders.service';
 
 const router = Router();
 
@@ -109,8 +111,33 @@ router.get(
 
 router.get(
   '/hsd-devices',
-  asyncHandler(async (_req, res) => {
-    res.json({ success: true, data: await ops.listHsdDevices() });
+  asyncHandler(async (req, res) => {
+    const raw = req.query.storeId ? String(req.query.storeId) : undefined;
+    let storeKey = raw;
+    if (raw) {
+      const store = await resolveDarkStoreKey(raw);
+      if (store) {
+        assertAnyStoreAccess(req.user, store.id, store.code, raw);
+        storeKey = store.id;
+      } else {
+        assertAnyStoreAccess(req.user, raw);
+      }
+    }
+    const allowedKeys = !storeKey && isStoreScopedUser(req.user) ? getAssignedStoreKeys(req.user) : null;
+    res.json({ success: true, data: await ops.listHsdDevices({ storeKey, allowedKeys }) });
+  }),
+);
+
+router.post(
+  '/hsd-devices/:deviceId/otp',
+  asyncHandler(async (req, res) => {
+    const deviceId = String(req.params.deviceId || '');
+    const data = await ops.regenerateHsdDeviceOtp(deviceId, req.user);
+    if (!data) {
+      res.status(404).json({ success: false, message: 'HSD device not found' });
+      return;
+    }
+    res.json({ success: true, data });
   }),
 );
 

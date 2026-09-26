@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { ResponseFormatter } from '../../utils/response';
+import { AppError } from '../../utils/AppError';
 import * as svc from './darkstore.service';
 import { WDTransferRequest, WDTransferLog } from '../warehouse/warehouse.models';
 import { WarehouseInventory, StoreInventory } from '../products/store-inventory.model';
@@ -1034,12 +1035,19 @@ export async function receiveWDTransferRequest(req: Request, res: Response, next
       return;
     }
 
-    // Apply received quantities from body or default to packed_qty
+    // received_qty must be a whole number and cannot exceed what was packed.
     const itemMap = new Map((items || []).map((i) => [i.sku, i.received_qty]));
-    request.items = request.items.map((item) => ({
-      ...item,
-      received_qty: itemMap.has(item.sku) ? itemMap.get(item.sku)! : item.packed_qty,
-    })) as typeof request.items;
+    request.items = request.items.map((item) => {
+      const packed = Number(item.packed_qty || 0);
+      const raw = itemMap.has(item.sku) ? itemMap.get(item.sku) : packed;
+      const received = Number(raw);
+      if (!Number.isInteger(received) || received < 0 || received > packed) {
+        throw AppError.badRequest(
+          `received_qty for ${item.sku || 'item'} must be an integer from 0 to the packed quantity (${packed})`,
+        );
+      }
+      return { ...item, received_qty: received };
+    }) as typeof request.items;
 
     const inventoryStoreId =
       storeOid ||
@@ -1059,12 +1067,19 @@ export async function receiveWDTransferRequest(req: Request, res: Response, next
         const qty = (item as any).received_qty as number;
         if (!item.product_id || qty <= 0) continue;
 
-        // Decrease warehouse stock
-        await WarehouseInventory.findOneAndUpdate(
-          { warehouseId: request.warehouse_id, productId: item.product_id },
+        // Decrement only when the warehouse actually holds the units. A miss
+        // must abort — otherwise the dark-store upsert creates stock from nothing.
+        const warehouseRow = await WarehouseInventory.findOneAndUpdate(
+          { warehouseId: request.warehouse_id, productId: item.product_id, quantity: { $gte: qty } },
           { $inc: { quantity: -qty } },
-          { session },
+          { session, new: true },
         );
+        if (!warehouseRow) {
+          throw AppError.conflict(
+            `Insufficient warehouse stock for ${item.sku || item.product_id}`,
+            'INSUFFICIENT_STOCK',
+          );
+        }
 
         // Increase darkstore stock (upsert) — storeId must be ObjectId
         await StoreInventory.findOneAndUpdate(

@@ -9,8 +9,14 @@ import { logger } from '../../utils/logger';
 import { calculatePricing } from '../../services/pricing.service';
 import { computeDeliveryFee, getDeliveryPricingConfig } from '../../services/deliveryPricing.service';
 import { findNearestDarkstore, resolveDarkStoreIdByCode } from '../store/store.repository';
-import { deriveFulfillmentStage, adminLabelForStage } from '../orders/order-lifecycle';
+import { deriveFulfillmentStage, adminLabelForStage, deliveryMissingOtp } from '../orders/order-lifecycle';
 import { assertAnyStoreAccess, orderStoreScopeFilter } from '../../utils/store-scope';
+import {
+  clientPriceEditError,
+  isPositivePrice,
+  zeroPriceError,
+} from '../orders/order-pricing-guard';
+import { acquireOpenOrderSlot } from '../orders/order-placement-lock';
 
 
 export async function listAdminOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -54,6 +60,9 @@ export async function listAdminOrders(req: Request, res: Response, next: NextFun
         customer_phone: u?.phoneNumber || u?.savedCheckoutContact?.phone || o.customerPhone || '',
         fulfillmentStage: stage,
         fulfillmentLabel: adminLabelForStage(stage),
+        exceptionReason: deliveryMissingOtp(o) ? (o.exceptionReason || 'NOT_DELIVERED') : o.exceptionReason ?? null,
+        offeredRiderName:
+          o.riderStage === 'offered' && o.adminFulfillment?.riderName ? o.adminFulfillment.riderName : null,
       };
     });
 
@@ -89,6 +98,9 @@ export async function getAdminOrder(req: Request, res: Response, next: NextFunct
       customer_phone: user?.phoneNumber || user?.savedCheckoutContact?.phone || '',
       fulfillmentStage: stage,
       fulfillmentLabel: adminLabelForStage(stage),
+      exceptionReason: deliveryMissingOtp(order) ? (order.exceptionReason || 'NOT_DELIVERED') : order.exceptionReason ?? null,
+      offeredRiderName:
+        order.riderStage === 'offered' && order.adminFulfillment?.riderName ? order.adminFulfillment.riderName : null,
     };
     res.status(200).json({ success: true, data: enriched });
   } catch (err) {
@@ -131,9 +143,15 @@ export async function placeOrderOnBehalf(req: Request, res: Response, next: Next
     if (!customerId) throw AppError.badRequest('customerId is required');
     if (!Array.isArray(items) || items.length === 0) throw AppError.badRequest('items must be a non-empty array');
 
+    const priceEdit = clientPriceEditError(req.body);
+    if (priceEdit) throw new AppError(priceEdit.error, priceEdit.statusCode, priceEdit.code);
+
     const customer = await CustomerUser.findById(customerId).lean();
     if (!customer) throw AppError.notFound('Customer');
 
+    const gate = await acquireOpenOrderSlot(String(customer._id));
+    if ('error' in gate) throw new AppError(gate.error, gate.statusCode, gate.code);
+    try {
     // Resolve product details and build order lines
     const productIds = items.map((i) => i.productId);
     const products = await Product.find({ _id: { $in: productIds } }).lean();
@@ -147,6 +165,10 @@ export async function placeOrderOnBehalf(req: Request, res: Response, next: Next
       if (!product) throw AppError.badRequest(`Product ${item.productId} not found`);
       const qty = Math.max(1, item.quantity || 1);
       const price = Number(product.price || 0);
+      if (!isPositivePrice(price)) {
+        const zero = zeroPriceError(product.name);
+        throw new AppError(zero.error, zero.statusCode, zero.code);
+      }
       const lineTotal = price * qty;
       subtotal += lineTotal;
       orderItems.push({
@@ -256,6 +278,9 @@ export async function placeOrderOnBehalf(req: Request, res: Response, next: Next
 
     logger.info('[AdminOrder] placed on behalf', { orderId: String(order._id), customerId, adminId: req.user?.userId });
     res.status(201).json({ success: true, data: order });
+    } finally {
+      await gate.release();
+    }
   } catch (err) {
     next(err);
   }

@@ -7,6 +7,13 @@ type Range = '24h' | '7d' | '30d' | '90d';
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
 
+/** Settled cash only. Unsettled COD and unpaid checkouts are not revenue. */
+const PAID_BILL = { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, '$totalBill', 0] };
+const PAID_ITEM_VALUE = {
+  $cond: [{ $eq: ['$paymentStatus', 'paid'] }, { $multiply: ['$items.price', '$items.quantity'] }, 0],
+};
+const COD_BILL = { $cond: [{ $eq: ['$paymentStatus', 'cod_pending'] }, '$totalBill', 0] };
+
 function getDateRange(range?: string): { start: Date; end: Date } {
   const now = new Date();
   const start = new Date(now);
@@ -31,46 +38,50 @@ export async function getRealtimeMetrics(range?: Range) {
   const prevEnd = new Date(start);
   const prevStart = new Date(prevEnd.getTime() - (end.getTime() - start.getTime()));
 
-  const [currentAgg, prevAgg, uniqueUsers, realizedAgg] = await Promise.all([
+  const open = { status: { $nin: ['cancelled'] } };
+  const [currentAgg, prevAgg, uniqueUsers, realizedAgg, prevRealizedAgg, codAgg] = await Promise.all([
     Order.aggregate([
-      { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-      { $group: { _id: null, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
-      { $project: { _id: 0, totalRevenue: 1, totalOrders: 1 } },
+      { $match: { createdAt: { $gte: start, $lte: end }, ...open } },
+      { $group: { _id: null, orderValue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: prevStart, $lt: prevEnd }, status: { $nin: ['cancelled'] } } },
-      { $group: { _id: null, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
-      { $project: { _id: 0, totalRevenue: 1, totalOrders: 1 } },
+      { $match: { createdAt: { $gte: prevStart, $lt: prevEnd }, ...open } },
+      { $group: { _id: null, orderValue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
     ]),
     Order.distinct('userId', { createdAt: { $gte: start, $lte: end } }),
-    // Realized revenue: paid only (COD pending is NOT realized until deposit settles paymentStatus=paid)
     Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: start, $lte: end },
-          status: { $nin: ['cancelled'] },
-          paymentStatus: 'paid',
-        },
-      },
+      { $match: { createdAt: { $gte: start, $lte: end }, ...open, paymentStatus: 'paid' } },
       { $group: { _id: null, realizedRevenue: { $sum: '$totalBill' }, paidOrders: { $sum: 1 } } },
+    ]),
+    Order.aggregate([
+      { $match: { createdAt: { $gte: prevStart, $lt: prevEnd }, ...open, paymentStatus: 'paid' } },
+      { $group: { _id: null, realizedRevenue: { $sum: '$totalBill' } } },
+    ]),
+    Order.aggregate([
+      { $match: { createdAt: { $gte: start, $lte: end }, ...open, paymentStatus: 'cod_pending' } },
+      { $group: { _id: null, pendingCodValue: { $sum: '$totalBill' }, pendingCodOrders: { $sum: 1 } } },
     ]),
   ]);
 
-  const curr = currentAgg[0] || { totalRevenue: 0, totalOrders: 0 };
-  const prev = prevAgg[0] || { totalRevenue: 0, totalOrders: 0 };
+  const curr = currentAgg[0] || { orderValue: 0, totalOrders: 0 };
+  const prev = prevAgg[0] || { orderValue: 0, totalOrders: 0 };
   const realized = realizedAgg[0] || { realizedRevenue: 0, paidOrders: 0 };
+  const prevRealized = prevRealizedAgg[0]?.realizedRevenue || 0;
+  const cod = codAgg[0] || { pendingCodValue: 0, pendingCodOrders: 0 };
 
-  const revenueGrowth = prev.totalRevenue > 0 ? Math.round(((curr.totalRevenue - prev.totalRevenue) / prev.totalRevenue) * 1000) / 10 : 0;
+  const revenueGrowth = prevRealized > 0 ? Math.round(((realized.realizedRevenue - prevRealized) / prevRealized) * 1000) / 10 : 0;
   const ordersGrowth = prev.totalOrders > 0 ? Math.round(((curr.totalOrders - prev.totalOrders) / prev.totalOrders) * 1000) / 10 : 0;
-  const aov = curr.totalOrders > 0 ? Math.round(curr.totalRevenue / curr.totalOrders) : 0;
+  const aov = curr.totalOrders > 0 ? Math.round(curr.orderValue / curr.totalOrders) : 0;
 
   return {
-    /** Gross order value (includes COD pending) — not realized cash. */
-    orderValue: curr.totalRevenue,
+    /** Gross order value (includes COD pending and unpaid) — not realized cash. */
+    orderValue: curr.orderValue,
     /** Realized revenue: paymentStatus === paid only. */
     totalRevenue: realized.realizedRevenue,
     realizedRevenue: realized.realizedRevenue,
-    pendingCodValue: Math.max(0, curr.totalRevenue - realized.realizedRevenue),
+    /** Cash still with riders. Unpaid and failed checkouts are not included. */
+    pendingCodValue: cod.pendingCodValue,
+    pendingCodOrders: cod.pendingCodOrders,
     totalOrders: curr.totalOrders,
     paidOrders: realized.paidOrders,
     activeUsers: uniqueUsers.length,
@@ -91,7 +102,7 @@ export async function getTimeSeriesData(range?: Range) {
 
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: groupBy, revenue: { $sum: '$totalBill' }, orders: { $sum: 1 }, users: { $addToSet: '$userId' } } },
+    { $group: { _id: groupBy, revenue: { $sum: PAID_BILL }, orders: { $sum: 1 }, users: { $addToSet: '$userId' } } },
     { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1, '_id.hour': 1 } },
     {
       $project: {
@@ -123,7 +134,7 @@ export async function getProductPerformance(range?: Range) {
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
     { $unwind: '$items' },
-    { $group: { _id: '$items.productId', totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }, unitsSold: { $sum: '$items.quantity' } } },
+    { $group: { _id: '$items.productId', totalRevenue: { $sum: PAID_ITEM_VALUE }, unitsSold: { $sum: '$items.quantity' } } },
     { $lookup: { from: 'customer_products', localField: '_id', foreignField: '_id', as: 'product' } },
     { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
     {
@@ -159,7 +170,7 @@ export async function getCategoryAnalytics(range?: Range) {
     { $unwind: { path: '$prod', preserveNullAndEmptyArrays: true } },
     { $lookup: { from: 'customer_categories', localField: 'prod.categoryId', foreignField: '_id', as: 'cat' } },
     { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
-    { $group: { _id: { $ifNull: ['$cat.name', 'Uncategorized'] }, revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }, orders: { $sum: 1 } } },
+    { $group: { _id: { $ifNull: ['$cat.name', 'Uncategorized'] }, revenue: { $sum: PAID_ITEM_VALUE }, orders: { $sum: 1 } } },
     { $sort: { revenue: -1 } },
   ];
 
@@ -179,7 +190,7 @@ export async function getRegionalPerformance(range?: Range) {
   const { start, end } = getDateRange(range || '30d');
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: { $ifNull: ['$deliveryAddress.city', 'Unknown'] }, revenue: { $sum: '$totalBill' }, orders: { $sum: 1 }, users: { $addToSet: '$userId' } } },
+    { $group: { _id: { $ifNull: ['$deliveryAddress.city', 'Unknown'] }, revenue: { $sum: PAID_BILL }, orders: { $sum: 1 }, users: { $addToSet: '$userId' } } },
     { $project: { city: '$_id', revenue: 1, orders: 1, activeUsers: { $size: '$users' } } },
     { $sort: { revenue: -1 } },
     { $limit: 20 },
@@ -193,7 +204,7 @@ export async function getCustomerMetrics(range?: Range) {
   const { start, end } = getDateRange(range || '30d');
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: null, totalCustomers: { $addToSet: '$userId' }, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
+    { $group: { _id: null, totalCustomers: { $addToSet: '$userId' }, totalRevenue: { $sum: PAID_BILL }, totalOrders: { $sum: 1 } } },
   ];
 
   const [agg] = await Promise.all([Order.aggregate(pipeline)]);
@@ -238,7 +249,7 @@ export async function getRevenueBreakdown(range?: Range) {
     { $unwind: { path: '$prod', preserveNullAndEmptyArrays: true } },
     { $lookup: { from: 'customer_categories', localField: 'prod.categoryId', foreignField: '_id', as: 'cat' } },
     { $unwind: { path: '$cat', preserveNullAndEmptyArrays: true } },
-    { $group: { _id: { $ifNull: ['$cat.name', 'Uncategorized'] }, value: { $sum: { $multiply: ['$items.price', '$items.quantity'] } } } },
+    { $group: { _id: { $ifNull: ['$cat.name', 'Uncategorized'] }, value: { $sum: PAID_ITEM_VALUE } } },
     { $sort: { value: -1 } },
   ];
 
@@ -258,7 +269,7 @@ export async function getGrowthTrends(range?: Range) {
   const { start, end } = getDateRange(range || '90d');
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, revenue: { $sum: '$totalBill' }, orders: { $sum: 1 } } },
+    { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, revenue: { $sum: PAID_BILL }, orders: { $sum: 1 } } },
     { $sort: { '_id.year': 1, '_id.month': 1 } },
   ];
 
@@ -279,7 +290,7 @@ async function peakHoursLogic(range?: Range) {
   const { start, end } = getDateRange(range || '7d');
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: { $hour: '$createdAt' }, orders: { $sum: 1 }, revenue: { $sum: '$totalBill' } } },
+    { $group: { _id: { $hour: '$createdAt' }, orders: { $sum: 1 }, revenue: { $sum: PAID_BILL } } },
     { $sort: { _id: 1 } },
   ];
   const result = await Order.aggregate(pipeline);
@@ -301,7 +312,7 @@ export async function getPaymentMethods(range?: Range) {
   const { start, end } = getDateRange(range || '30d');
   const pipeline: PipelineStage[] = [
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: { $ifNull: ['$paymentMethod.methodType', 'cash'] }, transactions: { $sum: 1 }, revenue: { $sum: '$totalBill' } } },
+    { $group: { _id: { $ifNull: ['$paymentMethod.methodType', 'cash'] }, transactions: { $sum: 1 }, revenue: { $sum: PAID_BILL }, pendingCod: { $sum: COD_BILL } } },
     { $sort: { revenue: -1 } },
   ];
 
@@ -312,6 +323,7 @@ export async function getPaymentMethods(range?: Range) {
     method: methodLabels[r._id] || r._id,
     transactions: r.transactions,
     revenue: r.revenue,
+    pendingCod: r.pendingCod || 0,
     percentage: totalRev > 0 ? Math.round((r.revenue / totalRev) * 1000) / 10 : 0,
   }));
 }
@@ -340,14 +352,29 @@ export async function getFinancialSummary(range?: Range) {
   const { start, end } = getDateRange(range || '30d');
   const agg = await Order.aggregate([
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: null, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 }, totalDiscount: { $sum: '$discount' }, totalDeliveryFee: { $sum: '$deliveryFee' } } },
+    {
+      $group: {
+        _id: null,
+        totalRevenue: { $sum: PAID_BILL },
+        orderValue: { $sum: '$totalBill' },
+        pendingCod: { $sum: COD_BILL },
+        totalOrders: { $sum: 1 },
+        paidOrders: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, 1, 0] } },
+        totalDiscount: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, '$discount', 0] } },
+        totalDeliveryFee: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'paid'] }, '$deliveryFee', 0] } },
+      },
+    },
   ]);
 
   const r = agg[0] || {};
-  const aov = r.totalOrders > 0 ? Math.round(r.totalRevenue / r.totalOrders) : 0;
+  const paidOrders = r.paidOrders || 0;
+  const aov = paidOrders > 0 ? Math.round((r.totalRevenue || 0) / paidOrders) : 0;
   return {
     totalRevenue: r.totalRevenue || 0,
+    orderValue: r.orderValue || 0,
+    pendingCod: r.pendingCod || 0,
     totalOrders: r.totalOrders || 0,
+    paidOrders,
     totalDiscount: r.totalDiscount || 0,
     totalDeliveryFee: r.totalDeliveryFee || 0,
     averageOrderValue: aov,
@@ -377,7 +404,7 @@ export async function createCustomReport(payload: CustomReportPayload) {
   const groupIdValue = Object.keys(groupId).length === 0 ? null : groupId;
 
   const groupStage: { _id: unknown; revenue?: unknown; orders?: unknown } = { _id: groupIdValue };
-  if (metrics.includes('revenue')) groupStage.revenue = { $sum: '$totalBill' };
+  if (metrics.includes('revenue')) groupStage.revenue = { $sum: PAID_BILL };
   if (metrics.includes('orders')) groupStage.orders = { $sum: 1 };
 
   const pipeline: PipelineStage[] = [{ $match: matchStage }, { $group: groupStage as PipelineStage.Group['$group'] }];
@@ -399,14 +426,14 @@ export async function exportReportData(params: ExportReportParams) {
   if (report === 'financial-summary') {
     const agg = await Order.aggregate([
       { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-      { $group: { _id: null, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
+      { $group: { _id: null, totalRevenue: { $sum: PAID_BILL }, pendingCod: { $sum: COD_BILL }, totalOrders: { $sum: 1 } } },
     ]);
-    return agg[0] || { totalRevenue: 0, totalOrders: 0 };
+    return agg[0] || { totalRevenue: 0, pendingCod: 0, totalOrders: 0 };
   }
 
   return Order.aggregate([
     { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
-    { $group: { _id: { $dateToString: { date: '$createdAt', format: '%Y-%m-%d' } }, revenue: { $sum: '$totalBill' }, orders: { $sum: 1 } } },
+    { $group: { _id: { $dateToString: { date: '$createdAt', format: '%Y-%m-%d' } }, revenue: { $sum: PAID_BILL }, orders: { $sum: 1 } } },
     { $sort: { _id: 1 } },
   ]);
 }

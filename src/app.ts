@@ -8,7 +8,6 @@ import mongoSanitize from 'express-mongo-sanitize';
 import hpp from 'hpp';
 import xss from 'xss-clean';
 import compression from 'compression';
-import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import mongoose from 'mongoose';
 import { randomUUID } from 'crypto';
@@ -19,6 +18,7 @@ import { swaggerSpec } from './config/swagger';
 import { logger } from './utils/logger';
 import { ResponseFormatter } from './utils/response';
 import { apiEnvelopeMiddleware, errorHandlerMiddleware, notFoundMiddleware } from './middleware/error.middleware';
+import { ipBlockMiddleware } from './middleware/ipBlock';
 import { getConnectionPoolHealth } from './database/mongoose';
 
 import authRoutes from './modules/auth/auth.routes';
@@ -167,16 +167,8 @@ export function createApp() {
   // Normalizes any raw `res.json({...})` call to the standard success/error envelope.
   app.use(apiEnvelopeMiddleware);
 
-  // General API rate limit (per IP) for all /api/v1 routes.
-  app.use(
-    '/api/v1',
-    rateLimit({
-      windowMs: appConfig.rateLimit.windowMs,
-      max: appConfig.rateLimit.maxRequests,
-      standardHeaders: true,
-      legacyHeaders: false,
-    }),
-  );
+  // One IP that floods customer, web, admin, rider, picker, or HSD is blocked for 15–20 minutes.
+  app.use(ipBlockMiddleware);
 
   // --- Module routes ---------------------------------------------------------
   app.use('/api/v1/customer/auth', authRoutes);

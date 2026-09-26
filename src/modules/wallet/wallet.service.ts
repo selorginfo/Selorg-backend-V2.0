@@ -77,10 +77,10 @@ export async function creditWallet(customerId: string | mongoose.Types.ObjectId,
     return { error: 'Wallet not available' };
   }
 
-  const balanceBefore = wallet.balance;
-  wallet.balance = roundInr(wallet.balance + parsed);
-  wallet.lastTransactionAt = new Date();
-  await wallet.save(session ? { session } : undefined);
+  const credited = await walletRepo.creditBalance(wallet._id as mongoose.Types.ObjectId, parsed, session);
+  if (!credited) return { error: 'Wallet not available' };
+  const balanceAfter = roundInr(credited.balance);
+  const balanceBefore = roundInr(balanceAfter - parsed);
 
   try {
     await walletRepo.createTransaction(
@@ -90,7 +90,7 @@ export async function creditWallet(customerId: string | mongoose.Types.ObjectId,
         type: 'credit',
         amount: parsed,
         balanceBefore,
-        balanceAfter: wallet.balance,
+        balanceAfter,
         source,
         referenceId,
         referenceType,
@@ -100,16 +100,16 @@ export async function creditWallet(customerId: string | mongoose.Types.ObjectId,
     );
   } catch (err) {
     if (err && ((err as { code?: number }).code === 11000 || String((err as Error)?.message || '').includes('duplicate'))) {
-      // Lost a race — reverse the balance bump we just applied.
-      wallet.balance = Math.max(0, roundInr(wallet.balance - parsed));
-      await wallet.save(session ? { session } : undefined);
+      // The ledger row already exists. Undo this increment with $inc so a concurrent credit is not overwritten.
+      await walletRepo.creditBalance(wallet._id as mongoose.Types.ObjectId, -parsed, session);
       const fresh = await getOrCreateWallet(customerId, session);
       return { balance: fresh.balance, credited: 0, alreadyCredited: true };
     }
+    await walletRepo.creditBalance(wallet._id as mongoose.Types.ObjectId, -parsed, session);
     throw err;
   }
 
-  return { balance: wallet.balance, credited: parsed };
+  return { balance: balanceAfter, credited: parsed };
 }
 
 type DebitMeta = { description?: string; session?: mongoose.ClientSession | null };

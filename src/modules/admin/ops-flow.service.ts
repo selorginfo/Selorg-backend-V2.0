@@ -8,6 +8,10 @@ import { pickerConfig } from '../picker/picker.config';
 import { hubDayStart, hubDayEnd, rupees } from '../picker/picker.format';
 import { HHDUser } from '../hhd/hhd.models';
 import { DarkstoreDevice, DeviceHistory } from '../darkstore/darkstore.models';
+import { DarkStore } from '../store/dark-store.model';
+import { ensureDarkstoreDeviceOtp, ensurePickerDeviceOtp, expandStoreKeys, rotateDeviceOtp } from '../picker/hsd-collection-otp';
+import { assertAnyStoreAccess } from '../../utils/store-scope';
+import type { AdminAuthUser } from '../../types/express';
 
 function rangeToDates(range?: string, from?: string, to?: string): { start: Date; end: Date } {
   const end = to ? new Date(to) : new Date();
@@ -617,37 +621,108 @@ export const getRiderStats = (id: string, range?: string, from?: string, to?: st
 export const getPickerStats = (id: string, range?: string, from?: string, to?: string) =>
   workerOrderStats(id, 'picker', range, from, to);
 
-export async function listHsdDevices() {
+async function storeLabelMap(keys: string[]): Promise<Map<string, string>> {
+  const expanded = await expandStoreKeys(keys);
+  if (!expanded.length) return new Map();
+  const ids = expanded.filter((k) => /^[a-f0-9]{24}$/i.test(k));
+  const codes = expanded.filter((k) => !/^[a-f0-9]{24}$/i.test(k));
+  const or: Record<string, unknown>[] = [];
+  if (ids.length) or.push({ _id: { $in: ids } });
+  if (codes.length) or.push({ code: { $in: codes } });
+  const stores = or.length ? await DarkStore.find(or.length === 1 ? or[0] : { $or: or }).select('name code').lean() : [];
+  const map = new Map<string, string>();
+  for (const store of stores) {
+    const label = store.code ? `${store.name} (${store.code})` : store.name;
+    map.set(String(store._id), label);
+    if (store.code) map.set(store.code, label);
+  }
+  return map;
+}
+
+export async function listHsdDevices(opts?: { storeKey?: string; allowedKeys?: string[] | null }) {
+  const scopeKeys = opts?.storeKey
+    ? await expandStoreKeys([opts.storeKey])
+    : opts?.allowedKeys
+      ? await expandStoreKeys(opts.allowedKeys)
+      : null;
+  const pickerQuery: Record<string, unknown> = {};
+  const darkQuery: Record<string, unknown> = {};
+  if (scopeKeys) {
+    if (!scopeKeys.length) return { devices: [] };
+    pickerQuery.warehouseKey = { $in: scopeKeys };
+    darkQuery.store_id = { $in: scopeKeys };
+  }
   const [pickerDevices, darkstoreDevices] = await Promise.all([
-    PickerDevice.find({}).sort({ updatedAt: -1 }).lean(),
-    DarkstoreDevice.find({}).sort({ updatedAt: -1 }).lean(),
+    PickerDevice.find(pickerQuery).sort({ updatedAt: -1 }).lean(),
+    DarkstoreDevice.find(darkQuery).sort({ updatedAt: -1 }).lean(),
   ]);
-  return {
-    devices: [
-      ...pickerDevices.map((d) => ({
+
+  const assigneeIds = pickerDevices.map((d) => d.assignedTo).filter(Boolean).map((id) => String(id));
+  const pickers = assigneeIds.length
+    ? await PickerUser.find({ _id: { $in: assigneeIds } }).select('name phone').lean()
+    : [];
+  const pickerNames = new Map(pickers.map((p) => [String(p._id), p.name || p.phone || String(p._id)]));
+
+  const storeKeys = [
+    ...pickerDevices.map((d) => d.warehouseKey || ''),
+    ...darkstoreDevices.map((d) => d.store_id || ''),
+  ];
+  const labels = await storeLabelMap(storeKeys);
+
+  const devices = [
+    ...await Promise.all(pickerDevices.map(async (d) => {
+      const collectionOtp = await ensurePickerDeviceOtp(d.deviceId);
+      const storeKey = d.warehouseKey || '';
+      return {
         source: 'picker_devices',
+        _id: String(d._id),
         deviceId: d.deviceId,
+        label: d.deviceModel || d.type || d.deviceId,
         model: d.deviceModel || d.type,
         status: d.status,
-        assignedTo: d.assignedTo ? String(d.assignedTo) : null,
+        assignedTo: d.assignedTo ? pickerNames.get(String(d.assignedTo)) || String(d.assignedTo) : null,
         battery: d.battery,
         lastSeen: d.lastSyncedAt,
         assignedAt: d.assignedAt,
-      })),
-      ...darkstoreDevices.map((d) => ({
+        storeId: storeKey || null,
+        store: labels.get(storeKey) || storeKey || 'Unassigned store',
+        collectionOtp,
+        serial: null,
+        firmware: null,
+      };
+    })),
+    ...await Promise.all(darkstoreDevices.map(async (d) => {
+      const collectionOtp = await ensureDarkstoreDeviceOtp(d.device_id);
+      const storeKey = d.store_id || '';
+      return {
         source: 'darkstore_devices',
+        _id: String(d._id),
         deviceId: d.device_id,
+        label: d.model || d.device_id,
         serial: d.serial_number,
         model: d.model,
         status: d.status,
         assignedTo: d.assigned_to || null,
         battery: d.battery_level,
         lastSeen: d.last_seen,
-        storeId: d.store_id,
+        storeId: storeKey || null,
+        store: labels.get(storeKey) || storeKey || 'Unassigned store',
         firmware: d.firmware_version,
-      })),
-    ],
-  };
+        collectionOtp,
+      };
+    })),
+  ];
+  return { devices };
+}
+
+export async function regenerateHsdDeviceOtp(deviceId: string, user?: AdminAuthUser) {
+  const picker = await PickerDevice.findOne({ deviceId }).select('deviceId warehouseKey').lean() as { deviceId?: string; warehouseKey?: string } | null;
+  const dark = picker ? null : await DarkstoreDevice.findOne({ device_id: deviceId }).select('device_id store_id').lean();
+  if (!picker && !dark) return null;
+  const storeId = picker?.warehouseKey || (dark as { store_id?: string } | null)?.store_id || null;
+  assertAnyStoreAccess(user, storeId || undefined);
+  const collectionOtp = await rotateDeviceOtp(deviceId);
+  return { deviceId, collectionOtp, storeId };
 }
 
 export async function getHsdDeviceHistory(deviceId: string, range?: string, from?: string, to?: string) {

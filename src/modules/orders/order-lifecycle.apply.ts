@@ -106,7 +106,17 @@ export async function applyFulfillmentTransition(input: ApplyFulfillmentInput): 
     $set.riderStage = 'cancelled';
   }
   if (input.to === 'delivered') {
+    if (order.otpVerified !== true && input.set?.otpVerified !== true) {
+      const err = new Error('Delivery OTP must be verified before the order can be marked delivered') as Error & {
+        statusCode?: number;
+        code?: string;
+      };
+      err.statusCode = 409;
+      err.code = 'OTP_REQUIRED';
+      throw err;
+    }
     $set.deliveredAt = now;
+    $set.otpVerified = true;
   }
   if (input.to === 'picker_accepted' && !$set.pickerAcceptedAt) {
     $set.pickerAcceptedAt = now;
@@ -149,10 +159,20 @@ export async function applyFulfillmentTransition(input: ApplyFulfillmentInput): 
     update.$unset = input.unset;
   }
 
-  const updated = await Order.findOneAndUpdate({ _id: order._id }, update, { new: true });
+  const storedStage = isFulfillmentStage(order.fulfillmentStage) ? order.fulfillmentStage : null;
+  const filter: Record<string, unknown> = { _id: order._id };
+  if (storedStage) {
+    filter.fulfillmentStage = storedStage;
+  } else {
+    filter.$or = [{ fulfillmentStage: { $exists: false } }, { fulfillmentStage: null }];
+    if (order.status) filter.status = order.status;
+  }
+
+  const updated = await Order.findOneAndUpdate(filter, update, { new: true });
   if (!updated) {
-    const err = new Error('Order not found') as Error & { statusCode?: number };
-    err.statusCode = 404;
+    const err = new Error('Order changed while updating. Refresh and try again.') as Error & { statusCode?: number; code?: string };
+    err.statusCode = 409;
+    err.code = 'FULFILLMENT_CONFLICT';
     throw err;
   }
 

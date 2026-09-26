@@ -85,24 +85,49 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
   const hhdUserName = String(hhdUser?.name || '').trim() || 'HSD Operator';
   let hsdDeviceId = String((hhdUser as { deviceId?: string }).deviceId || '').trim() || null;
 
-  // Require a device only when this operator has none AND the hub still has free devices to collect.
+  // A verified device is required. A linked picker must also have an open punch.
   const { PickerDevice } = await import('../picker/picker.models');
-  const held = await PickerDevice.findOne({
+  const held = (await PickerDevice.findOne({
     assignedTo: new mongoose.Types.ObjectId(userId),
     status: 'assigned',
   })
     .select('deviceId')
-    .lean();
+    .lean()) as { deviceId?: string } | null;
   if (held?.deviceId) hsdDeviceId = String(held.deviceId);
   if (!hsdDeviceId) {
-    const available = await PickerDevice.countDocuments({ status: 'available' }).catch(() => 0);
-    if (available > 0) {
-      throw new AppError(
-        'Collect and verify an HSD device before accepting orders.',
-        403,
-        'HSD_DEVICE_REQUIRED',
-      );
+    throw new AppError(
+      'Collect and verify an HSD device before accepting orders.',
+      403,
+      'HSD_DEVICE_REQUIRED',
+    );
+  }
+
+  const { PickerUser, PickerAttendance } = await import('../picker/picker.models');
+  const linkedPicker = (await PickerUser.findOne({ hhdUserId: new mongoose.Types.ObjectId(userId) })
+    .select('_id status activeShiftId')
+    .lean()) as { _id: mongoose.Types.ObjectId; status?: string; activeShiftId?: mongoose.Types.ObjectId | null } | null;
+  let pickerShiftId: string | null = null;
+  let hsdSessionId: string | null = null;
+  if (linkedPicker) {
+    if (String(linkedPicker.status || '') !== 'ACTIVE') {
+      throw new AppError('Picker account is not active', 403, 'OPERATOR_INACTIVE');
     }
+    const punch = (await PickerAttendance.findOne({
+      userId: linkedPicker._id,
+      punchOut: null,
+      status: { $in: ['ON_DUTY', 'ON_BREAK'] },
+    })
+      .select('_id shiftId')
+      .lean()) as { _id: mongoose.Types.ObjectId; shiftId?: string } | null;
+    if (!punch) {
+      throw new AppError('Punch in before accepting orders.', 403, 'PUNCH_REQUIRED');
+    }
+    pickerShiftId = punch.shiftId
+      ? String(punch.shiftId)
+      : linkedPicker.activeShiftId
+        ? String(linkedPicker.activeShiftId)
+        : null;
+    hsdSessionId = String(punch._id);
   }
 
   const owner = existing.userId ? String(existing.userId) : null;
@@ -115,7 +140,9 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
     await fulfillment.markCustomerPicking(orderId, {
       hhdUserId: userId,
       hhdUserName,
-      hsdDeviceId: hsdDeviceId || undefined,
+      hsdDeviceId,
+      hsdSessionId,
+      pickerShiftId,
     });
     return existing;
   }
@@ -157,7 +184,9 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
   await fulfillment.markCustomerPicking(orderId, {
     hhdUserId: userId,
     hhdUserName,
-    hsdDeviceId: hsdDeviceId || undefined,
+    hsdDeviceId,
+    hsdSessionId,
+    pickerShiftId,
   });
   return claimed;
 }

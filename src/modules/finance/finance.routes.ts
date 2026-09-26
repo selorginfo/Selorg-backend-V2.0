@@ -1,10 +1,13 @@
 import { Router } from 'express';
-import { authenticateAdmin } from '../../middleware/auth.middleware';
+import { authenticateAdmin, requirePermission, requirePermissionWhenMutating } from '../../middleware/auth.middleware';
+import { PERMISSIONS } from '../../config/permissions';
 import * as ctrl from './finance.controller';
 
 const router = Router();
 
 router.use(authenticateAdmin);
+router.use(requirePermission(PERMISSIONS.PAYMENTS_READ));
+router.use(requirePermissionWhenMutating(PERMISSIONS.PAYMENTS_REFUND));
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 router.get('/dashboard/summary', ctrl.getFinanceSummary);

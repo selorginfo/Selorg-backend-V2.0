@@ -6,6 +6,7 @@ import * as worldlineService from './worldline.service';
 import { resolveWebAppBaseUrl } from './paymentRedirectUrls';
 import { logger } from '../../utils/logger';
 import type { AddPaymentMethodInput, UpdatePaymentMethodInput, CreateWorldlineSessionInput, CompleteWorldlinePaymentInput, AbortWorldlinePaymentInput } from './payments.validation';
+import { statusCodeOf } from '../orders/order-pricing-guard';
 
 function requireCustomerId(req: Request): string {
   if (!req.customer?._id) throw AppError.unauthorized();
@@ -80,7 +81,8 @@ export async function createWorldlineSession(req: Request, res: Response, next: 
     const result = await worldlineService.createSession(userId, body);
     const err = errorOf(result);
     if (err) {
-      res.status(400).json(ResponseFormatter.error(err, 400));
+      const statusCode = statusCodeOf(result, 400);
+      res.status(statusCode).json(ResponseFormatter.error(err, statusCode));
       return;
     }
     res.status(200).json(ResponseFormatter.success((result as { data: unknown }).data));
@@ -121,7 +123,8 @@ export async function completeWorldlinePayment(req: Request, res: Response, next
     const result = await worldlineService.completePayment(userId, { orderId: resolvedOrderId, txnId: resolvedTxnId, response, clientDebug });
     const err = errorOf(result);
     if (err) {
-      res.status(400).json(ResponseFormatter.error(err, 400, (result as { data?: unknown }).data));
+      const statusCode = statusCodeOf(result, 400);
+      res.status(statusCode).json(ResponseFormatter.error(err, statusCode, (result as { data?: unknown }).data));
       return;
     }
     res.status(200).json(ResponseFormatter.success((result as { data: unknown }).data));

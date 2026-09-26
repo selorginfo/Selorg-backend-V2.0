@@ -127,6 +127,8 @@ export interface IOrder extends Document {
   onlineAmountDue: number;
   walletRefundedAt: Date | null;
   totalBill: number;
+  /** Server pricing frozen at placement. Compared again at payment confirmation. */
+  pricingLock?: unknown;
   pricingSnapshot: unknown;
   estimatedDelivery?: Date;
   deliveredAt?: Date;
@@ -155,6 +157,8 @@ export interface IOrder extends Document {
   rackedAt?: Date | null;
   riderStage?: OrderRiderStage | null;
   offerHubKey?: string | null;
+  /** Rider this offer is reserved for until `offerExpiresAt`. Accept is still required. */
+  offeredRiderId?: string | null;
   offerExpiresAt?: Date | null;
   assignedAt?: Date | null;
   acceptedAt?: Date | null;
@@ -259,6 +263,7 @@ const orderSchema = new Schema<IOrder>(
     onlineAmountDue: { type: Number, default: 0 },
     walletRefundedAt: { type: Date, default: null },
     totalBill: { type: Number, required: true, default: 0 },
+    pricingLock: { type: Schema.Types.Mixed, default: null },
     pricingSnapshot: { type: Schema.Types.Mixed, default: null },
     estimatedDelivery: { type: Date },
     deliveredAt: { type: Date },
@@ -281,6 +286,7 @@ const orderSchema = new Schema<IOrder>(
     rackedAt: { type: Date, default: null },
     riderStage: { type: String, enum: [...ORDER_RIDER_STAGES, null], default: null, index: true },
     offerHubKey: { type: String, default: null },
+    offeredRiderId: { type: String, default: null, index: true },
     offerExpiresAt: { type: Date, default: null },
     assignedAt: { type: Date, default: null },
     acceptedAt: { type: Date, default: null },
@@ -332,6 +338,21 @@ const orderSchema = new Schema<IOrder>(
   },
   { timestamps: true },
 );
+
+orderSchema.pre('save', function rejectDeliveredWithoutOtp(next) {
+  const delivered = this.status === 'delivered' || this.fulfillmentStage === 'delivered';
+  if (delivered && this.otpVerified !== true) {
+    const err = new Error('Delivery OTP must be verified before the order can be stored as delivered') as Error & {
+      statusCode?: number;
+      code?: string;
+    };
+    err.statusCode = 409;
+    err.code = 'OTP_REQUIRED';
+    next(err);
+    return;
+  }
+  next();
+});
 
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ orderNumber: 1 });

@@ -12,7 +12,9 @@ import {
   RIDER_APP_TOKEN_AUDIENCE,
 } from '../modules/picker/picker.auth.service';
 import { DEFAULT_HUB_KEY } from '../modules/orders/fulfillment.service';
+import mongoose from 'mongoose';
 import { isAllowedOrigin } from '../config/cors';
+import { Order } from '../modules/orders/order.model';
 
 const WORKFORCE_SOCKET_AUDIENCES = new Set([
   PICKER_TOKEN_AUDIENCE,
@@ -67,6 +69,12 @@ function riderRoom(pickerId: string): string {
 
 function orderRoom(orderId: string): string {
   return `order:${orderId}`;
+}
+
+async function customerOwnsOrder(userId: string, orderId: string): Promise<boolean> {
+  if (!mongoose.isValidObjectId(orderId) || !mongoose.isValidObjectId(userId)) return false;
+  const doc = await Order.exists({ _id: orderId, userId });
+  return Boolean(doc);
 }
 
 function corsOriginCheck(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
@@ -257,8 +265,20 @@ export function initOrderRealtime(httpServer: HttpServer): void {
 
   attachAuth(customerIo, authCustomer, (socket, data) => {
     socket.join(customerRoom(data.userId));
-    socket.on('subscribe:order', (orderId: string) => {
-      if (orderId) socket.join(orderRoom(String(orderId)));
+    socket.on('subscribe:order', (orderId: unknown) => {
+      const id = String(orderId || '').trim();
+      if (!id) return;
+      void customerOwnsOrder(data.userId, id)
+        .then((owns) => {
+          if (owns) socket.join(orderRoom(id));
+        })
+        .catch((err) => {
+          logger.warn('[realtime] subscribe:order rejected', { err });
+        });
+    });
+    socket.on('unsubscribe:order', (orderId: unknown) => {
+      const id = String(orderId || '').trim();
+      if (id) socket.leave(orderRoom(id));
     });
   });
 

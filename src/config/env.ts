@@ -48,6 +48,18 @@ export const appConfig = {
     maxRequests: int(process.env.RATE_LIMIT_MAX_REQUESTS, 1000),
   },
 
+  /**
+   * Burst cap per IP, then a 15–20 minute block.
+   * Covers customer app, web app, admin, rider, picker, and HSD (HHD/darkstore).
+   * A normal screen is a few dozen calls; this trips on a sustained flood.
+   */
+  ipBlock: {
+    windowMs: int(process.env.IP_BLOCK_WINDOW_MS, 60_000),
+    maxRequests: int(process.env.IP_BLOCK_MAX_REQUESTS, 180),
+    minBlockMs: int(process.env.IP_BLOCK_MIN_MS, 15 * 60 * 1000),
+    maxBlockMs: int(process.env.IP_BLOCK_MAX_MS, 20 * 60 * 1000),
+  },
+
   otp: {
     length: int(process.env.OTP_LENGTH, 4),
     ttlSeconds: int(process.env.OTP_TTL_SECONDS, 300),

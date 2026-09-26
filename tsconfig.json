@@ -18,10 +18,11 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "sourceMap": true,
+    "noEmitOnError": true,
     "removeComments": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
 }

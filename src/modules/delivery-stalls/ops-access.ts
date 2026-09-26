@@ -15,13 +15,14 @@ function roleKey(req: Request): string {
  */
 export function assertOpsAccess(req: Request, route: string, act: OpsAct, actionLabel?: string): void {
   const role = roleKey(req);
-  const full = role === 'super admin' || role === 'superadmin' || role === 'operations admin' || role === 'admin' || role === '';
-  if (full) {
-    if (act === 'delete' && role !== 'super admin' && role !== 'superadmin' && role !== 'operations admin' && role !== 'admin' && role !== '') {
-      throw AppError.forbidden('Delete is limited to Super Admin and Operations Admin');
-    }
-    return;
+  if (!role) {
+    throw AppError.forbidden('A role is required for this action');
   }
+  const full = role === 'super admin' || role === 'superadmin' || role === 'operations admin' || role === 'admin';
+  if (act === 'delete' && role !== 'super admin' && role !== 'superadmin' && role !== 'operations admin' && role !== 'admin') {
+    throw AppError.forbidden('Delete is limited to Super Admin and Operations Admin');
+  }
+  if (full) return;
 
   if (DELIVERY_ROUTES.has(route)) {
     if (role === 'rider manager' && act !== 'delete') return;

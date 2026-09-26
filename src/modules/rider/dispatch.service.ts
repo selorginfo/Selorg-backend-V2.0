@@ -436,6 +436,7 @@ export async function assignOrder(orderId: string, riderId: string, overrideSla 
       set: {
         pickerId: null,
         riderId: null,
+        offeredRiderId: String(picker._id),
         offerHubKey: customer.offerHubKey || picker.currentLocationId || 'DS-Adyar-01',
         offerExpiresAt,
         'adminFulfillment.riderName': picker.name || '',
@@ -448,6 +449,7 @@ export async function assignOrder(orderId: string, riderId: string, overrideSla 
         $set: {
           pickerId: null,
           riderId: null,
+          offeredRiderId: String(picker._id),
           offerExpiresAt,
           'adminFulfillment.riderName': picker.name || '',
         },
@@ -470,6 +472,20 @@ export async function assignOrder(orderId: string, riderId: string, overrideSla 
     );
   }
   // Never force isOnline. Never set riderStage=accepted here.
+  // The chosen rider is reserved via offeredRiderId until they accept or the offer expires.
+  try {
+    const { PickerNotification } = await import('../picker/picker.models');
+    await PickerNotification.create({
+      userId: picker._id,
+      type: 'order.offered',
+      title: 'New order offer',
+      body: `Order ${customer.orderNumber} is offered to you. Accept it in the Rider app before it returns to the hub pool.`,
+      data: { orderId: String(customer._id), orderNumber: customer.orderNumber, hubKey: customer.offerHubKey || null },
+      read: false,
+    });
+  } catch (err) {
+    logger.warn('[dispatch] rider offer notification failed', { orderId: String(customer._id), error: (err as Error).message });
+  }
 
   return {
     orderId: String(customer._id),
@@ -610,6 +626,32 @@ export async function assignOfferedCustomerOrders() {
     }
   }
   return { assigned, considered: offered.length };
+}
+
+/** Expired reservations return to the hub pool. They stay offered; they are not accepted. */
+export async function releaseExpiredRiderOffers(): Promise<{ released: number }> {
+  const { Order: CustomerOrder } = await import('../orders/order.model');
+  const now = new Date();
+  const result = await CustomerOrder.updateMany(
+    {
+      riderStage: 'offered',
+      pickerId: null,
+      offerExpiresAt: { $ne: null, $lt: now },
+      status: { $in: ['getting-packed', 'confirmed'] },
+    },
+    {
+      $set: { offerExpiresAt: null, offeredRiderId: null },
+      $push: {
+        timeline: {
+          status: 'getting-packed',
+          timestamp: now,
+          note: 'Rider offer expired — order returned to the hub pool',
+          actor: 'system',
+        },
+      },
+    },
+  );
+  return { released: result.modifiedCount || 0 };
 }
 
 export async function autoAssignOrders(orderIds: string[] | null = null) {

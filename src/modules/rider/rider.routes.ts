@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { authenticateAdmin } from '../../middleware/auth.middleware';
+import { authenticateAdmin, requirePermission } from '../../middleware/auth.middleware';
+import { PERMISSIONS } from '../../config/permissions';
 import * as ctrl from './rider.controller';
 
 const router = Router();
@@ -27,11 +28,11 @@ router.get('/dispatch/map/riders', authenticateAdmin, ctrl.getMapRiders);
 router.get('/dispatch/map/orders', authenticateAdmin, ctrl.getMapOrders);
 router.get('/dispatch/orders/:orderId/recommendations', authenticateAdmin, ctrl.getRecommendedRiders);
 router.get('/dispatch/orders/:orderId/assignment', authenticateAdmin, ctrl.getOrderAssignmentDetails);
-router.post('/dispatch/assign', authenticateAdmin, ctrl.assignOrder);
-router.post('/dispatch/batch-assign', authenticateAdmin, ctrl.batchAssignOrders);
-router.post('/dispatch/batch-assign-by-store', authenticateAdmin, ctrl.batchAssignByStore);
+router.post('/dispatch/assign', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.assignOrder);
+router.post('/dispatch/batch-assign', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.batchAssignOrders);
+router.post('/dispatch/batch-assign-by-store', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.batchAssignByStore);
 router.get('/live-positions', authenticateAdmin, ctrl.getLiveRiderPositions);
-router.post('/dispatch/auto-assign', authenticateAdmin, ctrl.autoAssignOrders);
+router.post('/dispatch/auto-assign', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.autoAssignOrders);
 router.post('/dispatch/simulate', authenticateAdmin, ctrl.simulateAutoAssign);
 router.post('/dispatch/manual-order', authenticateAdmin, ctrl.createManualOrder);
 router.get('/dispatch/auto-assign/rules', authenticateAdmin, ctrl.getAutoAssignRules);
@@ -43,7 +44,7 @@ router.post('/dispatch/cluster-metrics', authenticateAdmin, ctrl.computeClusterM
 router.get('/dispatch/clusters', authenticateAdmin, ctrl.listClusters);
 router.post('/dispatch/clusters', authenticateAdmin, ctrl.saveClusters);
 router.delete('/dispatch/clusters/:clusterId', authenticateAdmin, ctrl.deleteCluster);
-router.post('/dispatch/clusters/:clusterId/assign', authenticateAdmin, ctrl.assignCluster);
+router.post('/dispatch/clusters/:clusterId/assign', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.assignCluster);
 router.put('/dispatch/clusters/:clusterId/orders', authenticateAdmin, ctrl.updateClusterOrders);
 
 // ─── Audit ────────────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ router.post('/shifts/end', authenticateAdmin, ctrl.endShiftForRider);
 
 // ─── Rider order routes ───────────────────────────────────────────────────────
 router.get('/orders', authenticateAdmin, ctrl.listRiderOrders);
-router.post('/orders/:orderId/assign', authenticateAdmin, ctrl.assignRiderOrder);
+router.post('/orders/:orderId/assign', authenticateAdmin, requirePermission(PERMISSIONS.DELIVERY_ASSIGN), ctrl.assignRiderOrder);
 router.post('/orders/:orderId/alert', authenticateAdmin, ctrl.alertRiderOrder);
 
 // ─── Shifts ───────────────────────────────────────────────────────────────────

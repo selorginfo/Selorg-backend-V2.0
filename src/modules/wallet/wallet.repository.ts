@@ -56,8 +56,16 @@ export async function conditionalDebit(
   );
 }
 
-export async function creditBalance(walletId: mongoose.Types.ObjectId, amount: number, session: mongoose.ClientSession | null = null): Promise<void> {
-  await CustomerWallet.updateOne({ _id: walletId }, { $inc: { balance: amount } }, session ? { session } : undefined);
+export async function creditBalance(
+  walletId: mongoose.Types.ObjectId,
+  amount: number,
+  session: mongoose.ClientSession | null = null,
+): Promise<ICustomerWallet | null> {
+  return CustomerWallet.findOneAndUpdate(
+    { _id: walletId },
+    { $inc: { balance: amount }, $set: { lastTransactionAt: new Date() } },
+    { new: true, ...(session ? { session } : {}) },
+  );
 }
 
 export async function listTransactions(walletId: mongoose.Types.ObjectId, skip: number, limit: number) {

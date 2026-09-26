@@ -1237,6 +1237,7 @@ export async function completeRiderOrder(
 
   order.otpVerified = true;
   order.riderStage = 'delivered';
+  order.fulfillmentStage = 'delivered';
   order.status = 'delivered';
   order.deliveredAt = new Date();
   order.timeline.push({

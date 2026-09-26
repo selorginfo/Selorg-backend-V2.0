@@ -55,6 +55,7 @@ export async function recordOpsAction(
   req: Request,
   what: string,
   extra: Record<string, unknown> = {},
+  recordedStatus?: string,
 ): Promise<IOpsItem> {
   const kind = slugKind(what);
   const key = paramKey(req);
@@ -105,21 +106,21 @@ export async function recordOpsAction(
     path: req.originalUrl || req.path,
     payload,
     actor: actorOf(req),
-    status: req.method === 'DELETE' ? 'deleted' : 'recorded',
+    status: recordedStatus || (req.method === 'DELETE' ? 'deleted' : 'recorded'),
   });
   return doc;
 }
 
-/** Replaces 501 stubs: GET returns stored records; writes persist to Mongo. */
+/** Audit breadcrumb only. The advertised operation is not implemented. */
 export async function completeOpsAction(req: Request, res: Response, what: string, extra?: Record<string, unknown>): Promise<void> {
-  const item = await recordOpsAction(req, what, extra);
-  const payload = (item.payload || {}) as Record<string, unknown>;
-  const data = Array.isArray(payload.items) ? payload.items : item;
-  const total = typeof payload.total === 'number' ? payload.total : undefined;
-  res.status(req.method === 'POST' ? 201 : 200).json({
-    success: true,
-    data,
-    ...(total != null ? { total } : {}),
-    message: `${what} ${req.method === 'GET' ? 'loaded' : 'saved'}`,
+  try {
+    await recordOpsAction(req, what, { ...(extra || {}), unimplemented: true }, 'not_implemented');
+  } catch {
+    // A failed breadcrumb must not turn a missing feature into a success response.
+  }
+  res.status(501).json({
+    success: false,
+    message: `${what} is not implemented`,
+    error: { appCode: 'NOT_IMPLEMENTED', feature: what },
   });
 }

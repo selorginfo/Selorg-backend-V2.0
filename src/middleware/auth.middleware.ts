@@ -223,6 +223,18 @@ export function requirePermission(...requiredPermissions: string[]) {
   };
 }
 
+/** GET stays open to the route's existing auth. POST, PUT, PATCH, and DELETE need `requiredPermissions`. */
+export function requirePermissionWhenMutating(...requiredPermissions: string[]) {
+  const gate = requirePermission(...requiredPermissions);
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+      next();
+      return;
+    }
+    gate(req, res, next);
+  };
+}
+
 // --- Customer (storefront) auth --------------------------------------------
 
 async function resolveCustomerFromToken(token: string): Promise<{ _id: string; profile?: Record<string, unknown> } | null | 'blocked' | 'wrong_audience'> {

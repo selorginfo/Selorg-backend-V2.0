@@ -1,5 +1,8 @@
 import type { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { logger } from '../../utils/logger';
+import { Order } from '../orders/order.model';
+import { isPositivePrice, matchOrderPayment, payableAmount, pricingFromOrder, statusCodeOf } from '../orders/order-pricing-guard';
 import {
   createStandalonePaymentSession,
   processGatewayReturn,
@@ -30,6 +33,23 @@ export async function initiateStandalonePayment(req: Request, res: Response): Pr
       res.status(400).json({ success: false, message: 'amount is required' });
       return;
     }
+    if (!isPositivePrice(amount)) {
+      res.status(400).json({ success: false, message: 'Item price cannot be zero.' });
+      return;
+    }
+
+    let chargedAmount = Number(amount);
+    if (mongoose.Types.ObjectId.isValid(String(clientOrderId))) {
+      const order = await Order.findOne({ _id: clientOrderId, userId: req.customer!._id }).lean();
+      if (order) {
+        const mismatch = matchOrderPayment(order, chargedAmount);
+        if (mismatch) {
+          res.status(mismatch.statusCode).json({ success: false, message: mismatch.error });
+          return;
+        }
+        chargedAmount = payableAmount(pricingFromOrder(order));
+      }
+    }
     if (!customerEmail && !customerPhone) {
       res.status(400).json({ success: false, message: 'customerEmail or customerPhone is required' });
       return;
@@ -37,7 +57,7 @@ export async function initiateStandalonePayment(req: Request, res: Response): Pr
 
     const result = await createStandalonePaymentSession(String(req.customer!._id), {
       externalOrderRef: String(clientOrderId),
-      amountInr: Number(amount),
+      amountInr: chargedAmount,
       consumerEmailId: customerEmail ? String(customerEmail).trim() : '',
       consumerMobileNo: customerPhone ? String(customerPhone).trim() : '',
       platform,
@@ -85,7 +105,7 @@ export async function paymentCallback(req: Request, res: Response): Promise<void
       return;
     }
     if ('error' in result) {
-      res.status(400).json({
+      res.status(statusCodeOf(result, 400)).json({
         success: false,
         message: result.error,
         ...((result as { data?: Record<string, unknown> }).data ? { data: (result as { data?: Record<string, unknown> }).data } : {}),

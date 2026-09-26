@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Order, IOrder } from '../orders/order.model';
 import { WorldlinePayment } from './worldline-payment.model';
 import { releaseOrderFulfillment, voidUnpaidOnlineOrder } from '../orders/orders.service';
+import { matchOrderPayment, PRICING_MISMATCH_MESSAGE } from '../orders/order-pricing-guard';
 import { inferInstrumentFieldsFromWorldline } from '../orders/paymentMethodDisplay';
 import {
   resolveReturnUrlForPlatform,
@@ -223,6 +224,9 @@ export async function createSession(
   if (!(chargedAmount >= min && chargedAmount <= max)) {
     return { error: worldlineAmountRangeError(chargedAmount, min, max) };
   }
+
+  const pricingError = matchOrderPayment(order, chargedAmount);
+  if (pricingError) return pricingError;
 
   const latestAttempt = await WorldlinePayment.findOne({ orderId, platform: normalizedPlatform }).sort({ attemptNo: -1 });
 
@@ -683,7 +687,10 @@ type PaymentDoc = mongoose.Document & {
 export async function completePayment(
   userId: string,
   { orderId, txnId, response, clientDebug }: { orderId: string; txnId: string; response: unknown; clientDebug?: unknown },
-): Promise<{ error: string; data?: Record<string, unknown> } | { data: Record<string, unknown> }> {
+): Promise<
+  | { error: string; data?: Record<string, unknown>; statusCode?: number; code?: string }
+  | { data: Record<string, unknown> }
+> {
   if (!isEnabled()) return { error: 'Worldline payment is not enabled' };
 
   const salt = trimEnv(process.env.WORLDLINE_SALT);
@@ -705,6 +712,8 @@ export async function completePayment(
   if (isTerminal(payment.status) && payment.responseHash) {
     if (payment.status === 'success' && payment.verificationError === 'none') {
       if (order) {
+        const mismatch = matchOrderPayment(order, Number(payment.amountInr));
+        if (mismatch) return mismatch;
         try {
           await releaseOrderFulfillment(String(orderId));
         } catch (e) {
@@ -836,6 +845,14 @@ export async function completePayment(
       if ((order as unknown as { status?: string }).status === 'cancelled') {
         logger.warn('Worldline success on cancelled order — refund attention needed', { orderId: String(orderId), txnId: String(txnId) });
       } else {
+        const mismatch = matchOrderPayment(order, Number(effectivePayment.amountInr));
+        if (mismatch) {
+          await WorldlinePayment.updateOne(
+            { _id: payment._id },
+            { $set: { status: 'unknown', verificationError: 'amount_mismatch', statusMessage: mismatch.error } },
+          );
+          return mismatch;
+        }
         (order as unknown as { paymentStatus: string }).paymentStatus = 'paid';
         applyWorldlineInstrumentToOrder(order as unknown as IOrder, effectivePayment as unknown as Record<string, unknown>);
         await order.save();
@@ -900,6 +917,10 @@ export async function completePayment(
     return { error: payloadError, data: baseData };
   }
 
+  if (effectivePayment.verificationError === 'amount_mismatch') {
+    return { error: PRICING_MISMATCH_MESSAGE, statusCode: 429, code: 'PRICING_MISMATCH', data: baseData };
+  }
+
   return { data: baseData };
 }
 
@@ -942,7 +963,10 @@ export async function processGatewayReturn({
 }: {
   response: unknown;
   allowedUserId?: string;
-}): Promise<{ error: string; data?: Record<string, unknown> } | { data: Record<string, unknown> }> {
+}): Promise<
+  | { error: string; data?: Record<string, unknown>; statusCode?: number; code?: string }
+  | { data: Record<string, unknown> }
+> {
   if (!isEnabled()) return { error: 'Worldline payment is not enabled' };
   const salt = trimEnv(process.env.WORLDLINE_SALT);
   if (!salt) return { error: 'Worldline configuration incomplete' };
@@ -975,6 +999,8 @@ export async function processGatewayReturn({
   if (isTerminal(payment.status) && payment.responseHash) {
     if (payment.status === 'success' && payment.verificationError === 'none') {
       if (order) {
+        const mismatch = matchOrderPayment(order, Number(payment.amountInr));
+        if (mismatch) return mismatch;
         try {
           await releaseOrderFulfillment(String(order._id));
         } catch (e) {
@@ -1063,6 +1089,14 @@ export async function processGatewayReturn({
       if ((order as unknown as { status?: string }).status === 'cancelled') {
         logger.warn('Worldline gateway return success on cancelled order — refund attention needed', { orderId: String(order._id), txnId });
       } else {
+        const mismatch = matchOrderPayment(order, Number(effectivePayment.amountInr));
+        if (mismatch) {
+          await WorldlinePayment.updateOne(
+            { _id: payment._id },
+            { $set: { status: 'unknown', verificationError: 'amount_mismatch', statusMessage: mismatch.error } },
+          );
+          return mismatch;
+        }
         (order as unknown as { paymentStatus: string }).paymentStatus = 'paid';
         applyWorldlineInstrumentToOrder(order as unknown as IOrder, effectivePayment as unknown as Record<string, unknown>);
         await order.save();
@@ -1135,6 +1169,10 @@ export async function processGatewayReturn({
       logger.error('Worldline gateway return hash_mismatch with empty tpsl_txn_id', { txnId, rawTopKeys });
     }
     return { error: payloadError, data: baseData };
+  }
+
+  if (effectivePayment.verificationError === 'amount_mismatch') {
+    return { error: PRICING_MISMATCH_MESSAGE, statusCode: 429, code: 'PRICING_MISMATCH', data: baseData };
   }
 
   return { data: baseData };

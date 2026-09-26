@@ -173,6 +173,9 @@ export interface IPickerUser extends Document {
   locationOtpForLocationId?: string;
   locationOtpExpiresAt?: Date;
   locationOtpAttempts?: number;
+  /** Set when the picker enters the HSD collection OTP shown on the dashboard. */
+  deviceCollectionVerifiedAt?: Date;
+  deviceCollectionVerifiedId?: string;
   deletionRequestedAt?: Date;
   deletionReason: string;
   createdAt: Date;
@@ -270,6 +273,8 @@ const PickerUserSchema = new Schema<IPickerUser>(
     locationOtpForLocationId: { type: String, default: null },
     locationOtpExpiresAt: { type: Date, default: null },
     locationOtpAttempts: { type: Number, default: 0 },
+    deviceCollectionVerifiedAt: { type: Date, default: null },
+    deviceCollectionVerifiedId: { type: String, default: null },
     deletionRequestedAt: { type: Date, default: null },
     deletionReason: { type: String, default: '' },
   },
@@ -665,6 +670,9 @@ export interface IPickerDevice extends Document {
   battery?: number;
   lastSyncedAt?: Date;
   assignedAt?: Date;
+  /** 4-digit code the dark store manager reads out when a picker collects this HSD. */
+  collectionOtp?: string;
+  collectionOtpUpdatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -682,6 +690,8 @@ const PickerDeviceSchema = new Schema<IPickerDevice>(
     battery: { type: Number, min: 0, max: 100 },
     lastSyncedAt: { type: Date },
     assignedAt: { type: Date },
+    collectionOtp: { type: String, default: null },
+    collectionOtpUpdatedAt: { type: Date, default: null },
   },
   { timestamps: true, collection: 'picker_devices' },
 );

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../../middleware/validate.middleware';
-import { authenticateAdmin, requireRole, requirePermission } from '../../middleware/auth.middleware';
+import { authenticateAdmin, requireRole, requirePermission, requirePermissionWhenMutating } from '../../middleware/auth.middleware';
 import { PERMISSIONS } from '../../config/permissions';
 import * as authController from './admin-auth.controller';
 import * as usersController from './admin-users.controller';
@@ -172,7 +172,7 @@ supportRouter.post('/tickets/:id/assign', supportCtrl.assignTicket);
 supportRouter.post('/tickets/:id/notes', supportCtrl.addTicketNote);
 supportRouter.post('/tickets/:id/close', supportCtrl.closeTicket);
 supportRouter.post('/tickets/:id/escalate', supportCtrl.escalateTicket);
-supportRouter.post('/tickets/:id/refund', supportCtrl.refundTicket);
+supportRouter.post('/tickets/:id/refund', requirePermission(PERMISSIONS.ORDERS_REFUND), supportCtrl.refundTicket);
 supportRouter.post('/tickets/:id/redelivery', supportCtrl.redeliveryTicket);
 supportRouter.get('/agents', supportCtrl.listAgents);
 supportRouter.get('/categories', supportCtrl.listCategories);
@@ -200,12 +200,12 @@ customersRouter.get('/:id/refunds', customersCtrl.getCustomerRefunds);
 customersRouter.get('/:id/tickets', customersCtrl.getCustomerTickets);
 customersRouter.get('/:id/risk', customersCtrl.getCustomerRisk);
 customersRouter.get('/:id/wallet', customersCtrl.getCustomerWallet);
-customersRouter.post('/:id/wallet/credit', customersCtrl.creditCustomerWallet);
+customersRouter.post('/:id/wallet/credit', requirePermission(PERMISSIONS.PAYMENTS_REFUND), customersCtrl.creditCustomerWallet);
 customersRouter.get('/:id/addresses', customersCtrl.getCustomerAddresses);
 customersRouter.get('/:id/payment-methods', customersCtrl.getCustomerPaymentMethods);
 customersRouter.get('/:id/password-info', customersCtrl.getCustomerPasswordInfo);
-customersRouter.put('/:id/reset-password', customersCtrl.resetCustomerPassword);
-customersRouter.put('/:id/set-password', customersCtrl.setCustomerPassword);
+customersRouter.put('/:id/reset-password', requirePermission(PERMISSIONS.ADMIN_USERS_WRITE), customersCtrl.resetCustomerPassword);
+customersRouter.put('/:id/set-password', requirePermission(PERMISSIONS.ADMIN_USERS_WRITE), customersCtrl.setCustomerPassword);
 protectedRouter.use('/customers', customersRouter);
 
 // ─── Admin Orders ─────────────────────────────────────────────────────────────
@@ -263,8 +263,8 @@ protectedRouter.use('/picker-action-logs', pickerActionLogsRouter);
 protectedRouter.get('/system/server-status', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
   try { res.json({ success: true, data: { uptime: process.uptime(), memory: process.memoryUsage(), pid: process.pid, version: process.version, ts: new Date().toISOString() } }); } catch (err) { next(err); }
 });
-protectedRouter.get('/system/instances', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
-  try { res.json({ success: true, data: [{ id: '1', status: 'running', host: 'localhost' }] }); } catch (err) { next(err); }
+protectedRouter.get('/system/instances', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), (_req, res) => {
+  res.status(501).json({ success: false, message: 'Process instances are not implemented', error: { appCode: 'NOT_IMPLEMENTED', feature: 'system.instances' } });
 });
 protectedRouter.post('/system/instances/:id/restart', requirePermission(PERMISSIONS.ADMIN_CONFIG_WRITE), async (req, res, next) => {
   try {
@@ -272,17 +272,17 @@ protectedRouter.post('/system/instances/:id/restart', requirePermission(PERMISSI
     await completeOpsAction(req, res, `Instance restart ${req.params.id}`, { pid: process.pid, requested: true });
   } catch (err) { next(err); }
 });
-protectedRouter.get('/system/logs', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
-  try { res.json({ success: true, data: [] }); } catch (err) { next(err); }
+protectedRouter.get('/system/logs', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), (_req, res) => {
+  res.status(501).json({ success: false, message: 'System logs are not implemented', error: { appCode: 'NOT_IMPLEMENTED', feature: 'system.logs' } });
 });
 protectedRouter.get('/system/performance', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
   try { res.json({ success: true, data: { memory: process.memoryUsage(), cpuUsage: process.cpuUsage(), uptime: process.uptime() } }); } catch (err) { next(err); }
 });
-protectedRouter.get('/system/api-endpoints', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
-  try { res.json({ success: true, data: [] }); } catch (err) { next(err); }
+protectedRouter.get('/system/api-endpoints', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), (_req, res) => {
+  res.status(501).json({ success: false, message: 'API endpoint inventory is not implemented', error: { appCode: 'NOT_IMPLEMENTED', feature: 'system.api-endpoints' } });
 });
-protectedRouter.get('/system/migrations', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
-  try { res.json({ success: true, data: [] }); } catch (err) { next(err); }
+protectedRouter.get('/system/migrations', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), (_req, res) => {
+  res.status(501).json({ success: false, message: 'Migration status is not implemented', error: { appCode: 'NOT_IMPLEMENTED', feature: 'system.migrations' } });
 });
 protectedRouter.get('/system/cache/stats', requirePermission(PERMISSIONS.ADMIN_CONFIG_READ), async (_req, res, next) => {
   try {
@@ -336,23 +336,14 @@ protectedRouter.use('/cache', cacheRouter);
 
 // ─── Applications ─────────────────────────────────────────────────────────────
 const applicationsRouter = Router();
-applicationsRouter.get('/', async (_req, res, next) => {
-  try { res.json({ success: true, data: [] }); } catch (err) { next(err); }
-});
-applicationsRouter.get('/:id/health', async (req, res, next) => {
-  try { res.json({ success: true, data: { id: req.params.id, status: 'healthy', ts: new Date().toISOString() } }); } catch (err) { next(err); }
-});
-applicationsRouter.post('/:id/test-connection', async (req, res, next) => {
-  try { res.json({ success: true, data: { id: req.params.id, connected: true } }); } catch (err) { next(err); }
-});
-applicationsRouter.post('/:id/test', async (req, res, next) => {
-  try { res.json({ success: true, data: { id: req.params.id, result: 'ok' } }); } catch (err) { next(err); }
-});
-applicationsRouter.put('/:id', async (req, res, next) => {
-  try { res.json({ success: true, data: { id: req.params.id, ...req.body } }); } catch (err) { next(err); }
-});
-applicationsRouter.patch('/:id', async (req, res, next) => {
-  try { res.json({ success: true, data: { id: req.params.id, ...req.body } }); } catch (err) { next(err); }
+applicationsRouter.use(requirePermission(PERMISSIONS.ADMIN_CONFIG_READ));
+applicationsRouter.use(requirePermissionWhenMutating(PERMISSIONS.ADMIN_CONFIG_WRITE));
+applicationsRouter.use((_req, res) => {
+  res.status(501).json({
+    success: false,
+    message: 'Application registry is not implemented',
+    error: { appCode: 'NOT_IMPLEMENTED', feature: 'applications' },
+  });
 });
 protectedRouter.use('/applications', applicationsRouter);
 

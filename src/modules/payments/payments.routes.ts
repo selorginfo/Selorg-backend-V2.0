@@ -9,6 +9,7 @@ import {
   completeWorldlinePaymentSchema,
   abortWorldlinePaymentSchema,
 } from './payments.validation';
+import { rejectClientPriceEdits } from '../orders/order-pricing-guard';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.delete('/methods/:id', authenticateCustomer, controller.removePaymentMeth
 router.post('/methods/:id/default', authenticateCustomer, controller.setDefaultMethod);
 
 // Worldline / Paynimo (backend-led session, app-verified complete, status polling).
-router.post('/worldline/session', authenticateCustomer, validate(createWorldlineSessionSchema), controller.createWorldlineSession);
+router.post('/worldline/session', authenticateCustomer, rejectClientPriceEdits, validate(createWorldlineSessionSchema), controller.createWorldlineSession);
 router.post('/worldline/complete', authenticateCustomer, validate(completeWorldlinePaymentSchema), controller.completeWorldlinePayment);
 router.post('/worldline/abort', authenticateCustomer, validate(abortWorldlinePaymentSchema), controller.abortWorldlinePayment);
 router.get('/worldline/status', authenticateCustomer, controller.getWorldlineStatus);

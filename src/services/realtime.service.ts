@@ -1,8 +1,11 @@
 import type { Server as HttpServer } from 'http';
 import { Server as IOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import { logger } from '../utils/logger';
 import { getRedisClient } from '../database/redis';
+import { createCorsOriginHandler } from '../config/cors';
+import { Order } from '../modules/orders/order.model';
 
 const RIDER_GPS_TTL_SECONDS = 60;
 
@@ -41,7 +44,35 @@ function verifyHandshakeToken(token: string): Record<string, unknown> {
 //   rider:{riderId}    — the rider's own personal channel
 
 interface AuthedSocket extends Socket {
-  data: { userId: string; role: 'customer' | 'picker' | 'admin' };
+  data: { userId: string; role: string };
+}
+
+const CONSOLE_ROLES = new Set([
+  'admin',
+  'super_admin',
+  'superadmin',
+  'darkstore',
+  'dark_store_manager',
+  'store_manager',
+  'warehouse',
+  'warehouse_manager',
+  'finance',
+  'finance_admin',
+  'rider_manager',
+  'vendor',
+  'production',
+  'merch',
+  'operations_admin',
+  'operations',
+  'customer_support',
+  'catalog_manager',
+  'catalog',
+  'support',
+]);
+
+function isConsoleRole(role: string): boolean {
+  const key = role.toLowerCase().trim().replace(/[\s-]+/g, '_');
+  return CONSOLE_ROLES.has(key);
 }
 
 let io: IOServer | null = null;
@@ -50,8 +81,7 @@ export function initRealtime(httpServer: HttpServer): IOServer {
   if (io) return io;
   io = new IOServer(httpServer, {
     cors: {
-      origin: (process.env.CORS_ORIGINS || '*').split(',').map((s) => s.trim()),
-      credentials: true,
+      origin: createCorsOriginHandler(),
     },
   });
 
@@ -66,7 +96,7 @@ export function initRealtime(httpServer: HttpServer): IOServer {
       const userId = String(payload.sub || payload.userId || payload.id || '');
       if (!userId) return next(new Error('Invalid token: no user id'));
       const role = (payload.role as string) || (payload.adminId ? 'admin' : payload.sid ? 'picker' : 'customer');
-      (socket as AuthedSocket).data = { userId, role: role as AuthedSocket['data']['role'] };
+      (socket as AuthedSocket).data = { userId, role };
       return next();
     } catch (err) {
       return next(new Error(`Auth failed: ${(err as Error).message}`));
@@ -78,12 +108,23 @@ export function initRealtime(httpServer: HttpServer): IOServer {
     const { userId, role } = s.data;
     logger.info(`[realtime] connected role=${role} user=${userId} sid=${s.id}`);
 
-    if (role === 'admin') s.join('admin');
+    if (isConsoleRole(role)) s.join('admin');
     if (role === 'picker') s.join(`rider:${userId}`);
 
-    // Customers/admin can subscribe to a specific order feed.
-    s.on('order:subscribe', (orderId: string) => {
-      if (typeof orderId === 'string' && orderId) s.join(`order:${orderId}`);
+    // Customers and riders may only join an order room they own. Console roles
+    // already passed admin auth and can watch any order.
+    s.on('order:subscribe', async (orderId: string) => {
+      if (typeof orderId !== 'string' || !mongoose.isValidObjectId(orderId)) return;
+      if (isConsoleRole(role)) {
+        s.join(`order:${orderId}`);
+        return;
+      }
+      const owns = await Order.exists(
+        role === 'customer'
+          ? { _id: orderId, userId }
+          : { _id: orderId, $or: [{ riderId: userId }, { pickerId: userId }, { hhdUserId: userId }] },
+      );
+      if (owns) s.join(`order:${orderId}`);
     });
     s.on('order:unsubscribe', (orderId: string) => {
       if (typeof orderId === 'string' && orderId) s.leave(`order:${orderId}`);

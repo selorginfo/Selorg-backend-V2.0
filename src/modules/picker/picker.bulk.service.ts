@@ -522,7 +522,7 @@ export async function deliverStop(
   const order = await Order.findById(stop.orderId);
   if (!order) throw new AppError('Order not found.', 404, 'ORDER_NOT_FOUND');
 
-  if (order.deliveryOtp && String(input.otp || '') !== String(order.deliveryOtp)) {
+  if (!order.deliveryOtp || String(input.otp || '').trim() !== String(order.deliveryOtp)) {
     throw new AppError('Incorrect OTP. Please try again.', 400, 'INCORRECT_OTP');
   }
   if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'cod_pending') {
@@ -557,7 +557,9 @@ export async function deliverStop(
   if (expectedCod != null) stop.codCollected = expectedCod;
 
   order.riderStage = 'delivered';
+  order.fulfillmentStage = 'delivered';
   order.status = 'delivered';
+  order.otpVerified = true;
   order.deliveredAt = deliveredAt;
   order.podPhotoId = podPhotoId;
   order.deliveryType = 'bulk';

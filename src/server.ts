@@ -53,6 +53,7 @@ async function bootstrap() {
       });
       logEmailProviderStatus();
       warmSmtpConnection().catch(() => undefined);
+      startOpsPresenceSweep();
     })
     .on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
@@ -67,6 +68,24 @@ async function bootstrap() {
     });
 
   return app;
+}
+
+/** Clears killed-app riders and returns expired offers to the hub pool. */
+function startOpsPresenceSweep(): void {
+  const tick = async () => {
+    const { markStaleRidersOffline } = await import('./modules/picker/picker.support.service');
+    const { releaseExpiredRiderOffers } = await import('./modules/rider/dispatch.service');
+    const [presence, offers] = await Promise.all([markStaleRidersOffline(), releaseExpiredRiderOffers()]);
+    if (presence.markedOffline || offers.released) {
+      logger.info('Ops presence sweep', presence);
+      logger.info('Expired rider offers released', offers);
+    }
+  };
+  const timer = setInterval(() => {
+    tick().catch((err) => logger.warn('Ops presence sweep failed', { error: (err as Error).message }));
+  }, 30_000);
+  if (typeof timer.unref === 'function') timer.unref();
+  tick().catch((err) => logger.warn('Ops presence sweep failed', { error: (err as Error).message }));
 }
 
 process.on('unhandledRejection', (err) => {

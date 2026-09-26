@@ -18,10 +18,18 @@ import { buildPaymentMethodPresentation, buildEstimatedDeliveryMessage, inferIns
 import * as orderRepo from './order.repository';
 import { CustomerUser } from '../auth/auth.model';
 import { executeCancellation, canCustomerCancel } from './cancellation.service';
-import { adminLabelForStage, deriveFulfillmentStage } from './order-lifecycle';
+import { adminLabelForStage, deriveFulfillmentStage, type FulfillmentStage } from './order-lifecycle';
+import { applyFulfillmentTransition } from './order-lifecycle.apply';
 import { getOrCreateWallet, debitWalletForOrder, refundWalletForFailedOrderPayment, roundInr } from '../wallet/wallet.service';
 import { logger } from '../../utils/logger';
 import * as fulfillment from './fulfillment.service';
+import {
+  buildPricingLock,
+  isPositivePrice,
+  zeroPriceError,
+  type PricingLine,
+} from './order-pricing-guard';
+import { runWithPlacementLock } from './order-placement-lock';
 
 export { canCustomerCancel };
 
@@ -236,7 +244,16 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
     ratingComment: o.ratingComment || '',
     paymentStatus: o.paymentStatus || 'pending',
     storeId: o.storeId ? String(o.storeId) : null,
-    riderId: o.riderId ? String(o.riderId) : (o.pickerId ? String(o.pickerId) : null),
+    riderId: o.riderId
+      ? String(o.riderId)
+      : (['accepted', 'picked_up', 'delivered'].includes(String(o.riderStage || '')) && o.pickerId
+          ? String(o.pickerId)
+          : null),
+    offeredRiderId: o.offeredRiderId ? String(o.offeredRiderId) : null,
+    offeredRiderName:
+      String(o.riderStage || '') === 'offered' && (o.adminFulfillment as { riderName?: string } | undefined)?.riderName
+        ? (o.adminFulfillment as { riderName?: string }).riderName
+        : null,
     pickerId: o.pickerId ? String(o.pickerId) : null,
     hhdUserId: o.hhdUserId ? String(o.hhdUserId) : null,
     pickerAssignment: (o.adminFulfillment as { pickerName?: string } | undefined)?.pickerName
@@ -260,6 +277,7 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
         hhdUserId: o.hhdUserId,
         fulfillmentStage: (o.fulfillmentStage as string) || null,
         deliveryFailedAt: (o.deliveryFailedAt as Date | null) || null,
+        otpVerified: o.otpVerified === true,
       });
       return stage;
     })(),
@@ -270,9 +288,13 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
         hhdUserId: o.hhdUserId,
         fulfillmentStage: (o.fulfillmentStage as string) || null,
         deliveryFailedAt: (o.deliveryFailedAt as Date | null) || null,
+        otpVerified: o.otpVerified === true,
       }),
     ),
-    exceptionReason: o.exceptionReason || null,
+    exceptionReason:
+      (o.status === 'delivered' || o.fulfillmentStage === 'delivered' || o.riderStage === 'delivered') && o.otpVerified !== true
+        ? (o.exceptionReason || 'NOT_DELIVERED')
+        : (o.exceptionReason || null),
     hsdDeviceId: o.hsdDeviceId || null,
     hsdSessionId: o.hsdSessionId || null,
     pickerShiftId: o.pickerShiftId || null,
@@ -529,6 +551,12 @@ interface CreateOrderBody {
 }
 
 export async function createOrder(userId: string, body: CreateOrderBody): Promise<Record<string, unknown> | { error: string }> {
+  const items = body?.items;
+  if (!items || !Array.isArray(items) || items.length === 0) return { error: 'Items required' };
+  return runWithPlacementLock(userId, () => placeOrderForUser(userId, body));
+}
+
+async function placeOrderForUser(userId: string, body: CreateOrderBody): Promise<Record<string, unknown> | { error: string }> {
   const { items, addressId, paymentMethodId, paymentMethodType, couponCode, deliveryTip } = body || {};
   if (!items || !Array.isArray(items) || items.length === 0) return { error: 'Items required' };
 
@@ -591,6 +619,7 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
       variantSize = v.size || '';
     }
     const qty = Math.max(1, line.quantity || 1);
+    if (!isPositivePrice(price)) return zeroPriceError(product.name);
     const stockCheck = await assertStockAllowsAsync(product as never, qty, 0, 'set');
     if (stockCheck.error) return { error: `${product.name || 'Product'}: ${stockCheck.error}` };
 
@@ -753,6 +782,24 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     }
   }
 
+  const pricingLock = buildPricingLock({
+    lines: orderItems.map((it) => ({
+      productId: String(it.productId),
+      variantId: String(it.variantId || ''),
+      quantity: Number(it.quantity),
+      unitPrice: Number(it.price),
+    })) as PricingLine[],
+    itemTotal,
+    totalTax,
+    handlingCharge,
+    deliveryFee,
+    deliveryTip: deliveryTip || 0,
+    discount,
+    walletDeduction,
+    onlineAmountDue,
+    totalBill,
+  });
+
   const deferFulfillment = isGatewayPrepayment(storedMethodType);
   let paymentStatus: IOrder['paymentStatus'] = storedMethodType === 'cash' ? 'cod_pending' : 'pending';
 
@@ -766,15 +813,16 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
       // A failed transaction poisons the session. Each attempt gets a new one
       // so a duplicate-key abort cannot replay the same order number.
       session = await mongoose.startSession();
+      const txn = session;
       orderNumber = await orderRepo.generateOrderNumber();
       paymentStatus = storedMethodType === 'cash' ? 'cod_pending' : 'pending';
       try {
-        await session.withTransaction(async () => {
+        await txn.withTransaction(async () => {
           const orderObjectId = new mongoose.Types.ObjectId();
 
           if (walletCheckoutRequested && walletDeduction > 0) {
             const debit = await debitWalletForOrder(userId, walletDeduction, orderObjectId, {
-              session,
+              session: txn,
               description: `Payment for order ${orderNumber}`,
             });
             if ('error' in debit) {
@@ -839,26 +887,27 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
                 walletDeduction,
                 onlineAmountDue,
                 totalBill,
+                pricingLock,
                 estimatedDelivery,
                 etaMinutes,
                 pricingSnapshot: usePricingEngineForOrders ? engineResult : undefined,
-                fulfillmentReleased: false,
+                fulfillmentReleased: !deferFulfillment,
                 checkoutCouponCode: checkoutCouponCode || '',
               },
             ],
-            session,
+            txn,
           );
           order = created[0];
 
           if (!deferFulfillment && couponCode) {
             const normalizedCode = String(couponCode).trim().toUpperCase();
-            const couponDoc = await PricingCoupon.findOne({ code: normalizedCode }).session(session);
+            const couponDoc = await PricingCoupon.findOne({ code: normalizedCode }).session(txn);
             if (couponDoc) {
               const existingRedemption = await CouponRedemption.findOne({
                 couponId: couponDoc._id,
                 userId: new mongoose.Types.ObjectId(userId),
                 orderId: order._id,
-              }).session(session);
+              }).session(txn);
               if (!existingRedemption) {
                 await CouponRedemption.create(
                   [
@@ -869,9 +918,9 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
                       discountApplied: discount,
                     },
                   ],
-                  { session },
+                  { session: txn },
                 );
-                await PricingCoupon.updateOne({ _id: couponDoc._id }, { $inc: { usageCount: 1 } }, { session });
+                await PricingCoupon.updateOne({ _id: couponDoc._id }, { $inc: { usageCount: 1 } }, { session: txn });
               }
             }
           }
@@ -879,7 +928,7 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
           // COD / full wallet: clear cart once persisted.
           // Online / partial wallet: keep cart until releaseOrderFulfillment.
           if (!deferFulfillment) {
-            await cartService.clearCart(userId, session);
+            await cartService.clearCart(userId, txn);
           }
         });
         lastErr = null;
@@ -937,7 +986,6 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
 
   if (!deferFulfillment) {
     await runPostOrderIntegrations(userId, response, paymentStatus, storedMethodType, totalBill);
-    await Order.updateOne({ _id: order._id }, { $set: { fulfillmentReleased: true } });
   }
 
   return response;
@@ -950,14 +998,6 @@ export async function cancelOrder(userId: string, orderId: string, reason?: stri
   await fulfillment.onCustomerOrderCancelled(result);
   return formatOrderForApp(result.toObject());
 }
-
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  pending: ['confirmed', 'cancelled'],
-  confirmed: ['getting-packed', 'cancelled'],
-  'getting-packed': ['on-the-way', 'cancelled'],
-  'on-the-way': ['arrived', 'cancelled'],
-  arrived: ['delivered', 'cancelled'],
-};
 
 const STATUS_ACTOR_MAP: Record<string, string> = {
   confirmed: 'system',
@@ -989,16 +1029,71 @@ const STATUS_TO_EVENT: Record<string, string> = {
 
 const DEFAULT_HUB_KEY = process.env.DASHBOARD_HUB_KEY || 'DS-Adyar-01';
 
+function fulfillmentTargetForCustomerStatus(newStatus: string, from: FulfillmentStage): FulfillmentStage | 'arrived' | null {
+  if (newStatus === 'arrived') return 'arrived';
+  if (newStatus === 'confirmed') return 'confirmed';
+  if (newStatus === 'getting-packed') {
+    if (from === 'picker_accepted' || from === 'packed_in_rack' || from === 'rider_accepted') return from;
+    return 'picker_accepted';
+  }
+  if (newStatus === 'on-the-way') return 'rider_picked';
+  if (newStatus === 'delivered') return 'delivered';
+  if (newStatus === 'cancelled') return 'cancelled';
+  return null;
+}
+
 export async function updateCustomerOrderStatus(orderId: string, newStatus: string, opts: { actor?: string; note?: string; riderId?: string } = {}): Promise<Record<string, unknown> | { error: string }> {
   const { actor, note, riderId } = opts;
   const order = await findOrderDoc(orderId);
   if (!order) return { error: 'Order not found' };
 
-  const allowed = VALID_TRANSITIONS[order.status];
-  if (!allowed || !allowed.includes(newStatus)) return { error: `Cannot transition from "${order.status}" to "${newStatus}"` };
+  const from = deriveFulfillmentStage(order);
+  if (from === 'delivered' || from === 'cancelled' || order.status === 'delivered' || order.status === 'cancelled') {
+    return { error: `Cannot transition from "${order.status}" to "${newStatus}"` };
+  }
+
+  const target = fulfillmentTargetForCustomerStatus(newStatus, from);
+  if (!target) return { error: `Cannot transition from "${order.status}" to "${newStatus}"` };
+
+  if (target === 'arrived') {
+    const arrivedFrom = order.status === 'on-the-way';
+    if (from !== 'rider_picked' || !arrivedFrom) {
+      return { error: `Cannot transition from "${order.status}" to "arrived"` };
+    }
+    const updated = await Order.findOneAndUpdate(
+      { _id: order._id, status: order.status },
+      {
+        $set: { status: 'arrived' },
+        $push: {
+          timeline: {
+            status: 'arrived',
+            timestamp: new Date(),
+            note: note || STATUS_NOTE_MAP.arrived,
+            actor: actor || STATUS_ACTOR_MAP.arrived,
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!updated) return { error: 'Order changed while updating. Refresh and try again.' };
+    notifyOrderStatus(updated, 'arrived', { actor: actor || STATUS_ACTOR_MAP.arrived });
+    emitOrderStatus(String(updated._id), { status: 'arrived', orderNumber: updated.orderNumber, note: note || '' });
+    eventBus.emit(STATUS_TO_EVENT.arrived, {
+      orderId: String(updated._id),
+      orderNumber: updated.orderNumber,
+      userId: String(updated.userId),
+      hubKey: updated.offerHubKey || DEFAULT_HUB_KEY,
+      offerHubKey: updated.offerHubKey || DEFAULT_HUB_KEY,
+      status: 'arrived',
+      riderId: updated.riderId ? String(updated.riderId) : riderId || undefined,
+    });
+    return formatOrderForApp(updated.toObject());
+  }
+
+  if (target === from) return formatOrderForApp(order.toObject());
 
   if (newStatus === 'delivered') {
-    if (order.riderStage !== 'picked_up' && order.fulfillmentStage !== 'rider_picked') {
+    if (from !== 'rider_picked') {
       return { error: 'Rider must pick up the order before it can be marked delivered' };
     }
     if (!order.otpVerified) {
@@ -1009,64 +1104,27 @@ export async function updateCustomerOrderStatus(orderId: string, newStatus: stri
     }
   }
 
-  // Map admin status updates onto fulfillmentStage when possible
-  const stageFromStatus: Record<string, IOrder['fulfillmentStage']> = {
-    confirmed: 'confirmed',
-    'getting-packed': order.fulfillmentStage === 'packed_in_rack' ? 'packed_in_rack' : 'picker_accepted',
-    'on-the-way': 'rider_picked',
-    delivered: 'delivered',
-    cancelled: 'cancelled',
-  };
-
-  order.status = newStatus as IOrder['status'];
-  if (stageFromStatus[newStatus]) {
-    order.fulfillmentStage = stageFromStatus[newStatus] as IOrder['fulfillmentStage'];
-  }
-  order.timeline.push({ status: newStatus, timestamp: new Date(), note: note || STATUS_NOTE_MAP[newStatus] || '', actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system' });
-
-  if (riderId) {
-    order.riderId = String(riderId);
-  }
-
-  if (newStatus === 'delivered') {
-    order.deliveredAt = new Date();
-    order.riderStage = 'delivered';
-    order.fulfillmentStage = 'delivered';
-  }
-  if (newStatus === 'cancelled') {
-    order.cancellationReason = note || 'Order cancelled';
-    if (order.riderStage) order.riderStage = 'cancelled';
-    order.fulfillmentStage = 'cancelled';
-  }
-
-  await order.save();
-
-  // Admin/system cancel must also tear down HHD pick ticket (same as customer cancel).
-  if (newStatus === 'cancelled') {
-    try {
-      await fulfillment.onCustomerOrderCancelled(order);
-    } catch {
-      /* non-fatal — customer_orders already cancelled */
-    }
-  }
-
-  notifyOrderStatus(order, newStatus, { actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system' });
-  emitOrderStatus(String(order._id), { status: newStatus, orderNumber: order.orderNumber, note: note || '' });
-  // Bridge to customer/HHD/rider sockets via eventBus (admin socket alone is not enough).
-  const eventType = STATUS_TO_EVENT[newStatus];
-  if (eventType) {
-    eventBus.emit(eventType, {
+  try {
+    const updated = await applyFulfillmentTransition({
       orderId: String(order._id),
-      orderNumber: order.orderNumber,
-      userId: String(order.userId),
-      hubKey: order.offerHubKey || DEFAULT_HUB_KEY,
-      offerHubKey: order.offerHubKey || DEFAULT_HUB_KEY,
-      status: newStatus,
-      riderId: order.riderId ? String(order.riderId) : riderId || undefined,
+      to: target,
+      actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system',
+      note: note || STATUS_NOTE_MAP[newStatus],
+      set: riderId ? { riderId: String(riderId) } : undefined,
     });
+    if (newStatus === 'cancelled') {
+      try {
+        await fulfillment.onCustomerOrderCancelled(updated);
+      } catch {
+        /* non-fatal — customer_orders already cancelled */
+      }
+    }
+    notifyOrderStatus(updated, updated.status, { actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system', note });
+    if (riderId) emitOrderAssigned(String(updated._id), String(riderId), { orderNumber: updated.orderNumber, status: updated.status });
+    return formatOrderForApp(updated.toObject());
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Could not update order status' };
   }
-  if (riderId) emitOrderAssigned(String(order._id), String(riderId), { orderNumber: order.orderNumber, status: newStatus });
-  return formatOrderForApp(order.toObject());
 }
 
 export async function getActiveOrder(userId: string): Promise<Record<string, unknown> | null> {
@@ -1182,26 +1240,66 @@ export async function reorderItems(userId: string, orderId: string): Promise<Rec
 // Unlike listOrders/getOrderById, these are not scoped to a customer. They power
 // the admin dashboard's order management screens.
 
+/** Match a dark store by Mongo id or store code. */
+export async function resolveDarkStoreKey(key: string): Promise<{ id: string; code: string } | null> {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  const store = /^[a-f0-9]{24}$/i.test(trimmed)
+    ? await DarkStore.findById(trimmed).select('code name').lean()
+    : await DarkStore.findOne({
+        code: new RegExp(`^${trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      })
+        .select('code name')
+        .lean();
+  if (!store) return null;
+  return { id: String(store._id), code: store.code || '' };
+}
+
+async function loadStoreLabels(storeIds: Array<unknown>): Promise<Map<string, { name: string; code: string }>> {
+  const ids = [...new Set(storeIds.map((id) => (id ? String(id) : '')).filter((id) => /^[a-f0-9]{24}$/i.test(id)))];
+  if (!ids.length) return new Map();
+  const stores = await DarkStore.find({ _id: { $in: ids } }).select('name code').lean();
+  return new Map(stores.map((s) => [String(s._id), { name: s.name || '', code: s.code || '' }]));
+}
+
 export async function adminListOrders(
   page = 1,
   limit = 20,
-  filters: { status?: string; storeId?: string; riderId?: string; search?: string; date?: string } = {},
+  filters: {
+    status?: string;
+    statuses?: string[];
+    storeId?: string;
+    riderId?: string;
+    search?: string;
+    date?: string;
+    scope?: Record<string, unknown> | null;
+  } = {},
 ): Promise<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
   const query: Record<string, unknown> = {};
-  if (filters.status) query.status = filters.status;
-  if (filters.storeId) query.storeId = filters.storeId;
+  const and: Record<string, unknown>[] = [];
+  if (filters.statuses?.length) query.status = { $in: filters.statuses };
+  else if (filters.status) query.status = filters.status;
+  if (filters.storeId && /^[a-f0-9]{24}$/i.test(filters.storeId)) {
+    query.storeId = new mongoose.Types.ObjectId(filters.storeId);
+  } else if (filters.storeId) {
+    query.storeId = filters.storeId;
+  }
   if (filters.riderId) query.riderId = filters.riderId;
   if (filters.search) {
     const rx = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    query.$or = [
-      { orderNumber: rx },
-      { customerName: rx },
-      { customerPhone: rx },
-      { 'deliveryAddress.line1': rx },
-      { 'shippingAddress.contactName': rx },
-      { 'shippingAddress.contactPhone': rx },
-    ];
+    and.push({
+      $or: [
+        { orderNumber: rx },
+        { customerName: rx },
+        { customerPhone: rx },
+        { 'deliveryAddress.line1': rx },
+        { 'shippingAddress.contactName': rx },
+        { 'shippingAddress.contactPhone': rx },
+      ],
+    });
   }
+  if (filters.scope) and.push(filters.scope);
+  if (and.length) query.$and = and;
   if (filters.date) {
     // Interpret date as IST (UTC+5:30)
     const day = filters.date;
@@ -1224,13 +1322,17 @@ export async function adminListOrders(
         .lean()
     : [];
   const userMap = new Map(users.map((u) => [String(u._id), u as { name?: string; phoneNumber?: string; savedCheckoutContact?: { fullName?: string; phone?: string } }]));
+  const storeLabels = await loadStoreLabels(orders.map((o) => o.storeId));
 
   const enriched = orders.map((o) => {
     const u = userMap.get(String(o.userId));
+    const store = storeLabels.get(String(o.storeId || ''));
     return {
       ...formatOrderForApp(o as unknown as Record<string, unknown>),
       customer_name: u?.name || u?.savedCheckoutContact?.fullName || '',
       customer_phone: u?.phoneNumber || u?.savedCheckoutContact?.phone || '',
+      storeName: store?.name || '',
+      storeCode: store?.code || '',
     };
   });
 
@@ -1254,10 +1356,14 @@ export async function adminGetOrderById(orderId: string): Promise<Record<string,
         .select('name phoneNumber savedCheckoutContact')
         .lean() as { name?: string; phoneNumber?: string; savedCheckoutContact?: { fullName?: string; phone?: string } } | null
     : null;
+  const store = await loadStoreLabels([order.storeId]);
+  const label = store.get(String(order.storeId || ''));
   return {
     ...formatOrderForApp({ ...order, _worldlinePayment: worldlinePayment || null } as unknown as Record<string, unknown>),
     customer_name: user?.name || user?.savedCheckoutContact?.fullName || '',
     customer_phone: user?.phoneNumber || user?.savedCheckoutContact?.phone || '',
+    storeName: label?.name || '',
+    storeCode: label?.code || '',
   };
 }
 

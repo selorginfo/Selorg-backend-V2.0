@@ -549,6 +549,8 @@ const deviceSchema = new Schema(
     last_seen: Date,
     store_id: String,
     firmware_version: String,
+    collection_otp: { type: String, default: null },
+    collection_otp_updated_at: { type: Date, default: null },
   },
   { timestamps: true }
 );

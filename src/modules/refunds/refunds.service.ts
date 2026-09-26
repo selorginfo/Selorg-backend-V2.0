@@ -109,8 +109,10 @@ export async function createRefundRequest(customerId: string, body: CreateRefund
   const user = await CustomerUser.findById(customerId).lean();
   if (!user) throw AppError.notFound('Customer');
 
+  const orderMatch: Record<string, unknown>[] = [{ orderNumber: orderId }];
+  if (mongoose.Types.ObjectId.isValid(orderId)) orderMatch.unshift({ _id: orderId });
   const order = await Order.findOne({
-    $or: [{ _id: mongoose.Types.ObjectId.isValid(orderId) ? orderId : undefined }, { orderNumber: orderId }].filter(Boolean),
+    $or: orderMatch,
     userId: customerId,
   }).lean();
   if (!order) throw AppError.notFound('Order');

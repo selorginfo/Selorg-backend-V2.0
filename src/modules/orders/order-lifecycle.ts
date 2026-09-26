@@ -107,6 +107,18 @@ export function riderStageForFulfillment(stage: FulfillmentStage): OrderRiderSta
   }
 }
 
+/** A stored "delivered" row that never verified the delivery OTP is an exception, not a completed delivery. */
+export function deliveryMissingOtp(order: {
+  status?: string | null;
+  riderStage?: string | null;
+  fulfillmentStage?: string | null;
+  otpVerified?: boolean | null;
+}): boolean {
+  const stored = isFulfillmentStage(order.fulfillmentStage) ? order.fulfillmentStage : null;
+  const looksDelivered = stored === 'delivered' || order.status === 'delivered' || order.riderStage === 'delivered';
+  return looksDelivered && order.otpVerified !== true;
+}
+
 /** Derive stage from legacy documents that pre-date fulfillmentStage. */
 export function deriveFulfillmentStage(order: {
   status?: string | null;
@@ -114,7 +126,12 @@ export function deriveFulfillmentStage(order: {
   hhdUserId?: unknown;
   deliveryFailedAt?: Date | null;
   fulfillmentStage?: string | null;
+  otpVerified?: boolean | null;
 }): FulfillmentStage {
+  if (deliveryMissingOtp(order)) return 'exception';
+  if (order.otpVerified === true && (order.status === 'delivered' || order.riderStage === 'delivered' || order.fulfillmentStage === 'delivered')) {
+    return 'delivered';
+  }
   if (isFulfillmentStage(order.fulfillmentStage)) return order.fulfillmentStage;
 
   const status = String(order.status || '');
