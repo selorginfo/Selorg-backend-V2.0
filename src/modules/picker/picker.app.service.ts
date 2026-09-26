@@ -347,7 +347,7 @@ export async function getProfileOverview(pickerId: string) {
       workHistory: 'Attendance & shift records',
       documents: docLabel,
       bank: primaryBank ? bankLabel(primaryBank.bankName, primaryBank.accountNumber) : null,
-      payouts: 'Earnings & payment history',
+      salary: 'Monthly pay, leave & OT',
       training: videos.length ? `${done} of ${videos.length} modules complete` : null,
       support: 'Help, FAQs & notifications',
     },
