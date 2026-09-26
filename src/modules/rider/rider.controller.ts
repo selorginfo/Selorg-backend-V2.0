@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { ResponseFormatter } from '../../utils/response';
 import cacheService from '../../utils/cache';
 import * as riderService from './rider.service';
@@ -9,11 +10,11 @@ import { listActiveRiderPositions } from '../../services/realtime.service';
 
 const CACHE_TTL = 30; // seconds
 
-async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+async function cached<T>(key: string, fn: () => Promise<T>, ttlSeconds = CACHE_TTL): Promise<T> {
   const hit = await cacheService.get<T>(key);
   if (hit !== null) return hit;
   const val = await fn();
-  await cacheService.set(key, val, CACHE_TTL);
+  await cacheService.set(key, val, ttlSeconds);
   return val;
 }
 
@@ -21,14 +22,16 @@ async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 export async function getSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const summary = await cached('rider:summary', async () => {
-      const [totalRiders, onlineRiders, busyRiders] = await Promise.all([
-        (await import('./rider.models')).Rider.countDocuments({}),
-        (await import('./rider.models')).Rider.countDocuments({ status: 'online' }),
-        (await import('./rider.models')).Rider.countDocuments({ status: 'busy' }),
-      ]);
-      return { totalRiders, onlineRiders, busyRiders, offlineRiders: totalRiders - onlineRiders - busyRiders };
-    });
+    const summary = await cached('rider:summary:picker', async () => {
+      const { getPickerFleetCounts } = await import('./pickerFleet.bridge');
+      const c = await getPickerFleetCounts();
+      return {
+        totalRiders: c.total,
+        onlineRiders: c.online,
+        busyRiders: c.busy,
+        offlineRiders: c.offline + c.idle,
+      };
+    }, 5);
     res.json(ResponseFormatter.success(summary));
   } catch (err) { next(err); }
 }
@@ -558,6 +561,19 @@ export async function terminateContract(req: Request, res: Response, next: NextF
 export async function listHRRiders(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, onboardingStatus, search, page, limit } = req.query as Record<string, string>;
+    const { listHRRidersFromPickers } = await import('./pickerOps.bridge');
+    const bridged = await listHRRidersFromPickers({
+      status,
+      onboardingStatus,
+      search,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+    });
+    if (bridged.total > 0) {
+      res.json(ResponseFormatter.success(bridged));
+      return;
+    }
+    // Fallback to legacy rider_hr if picker fleet empty
     const query: Record<string, unknown> = {};
     if (status) query.status = status;
     if (onboardingStatus) query.onboardingStatus = onboardingStatus;
@@ -570,6 +586,9 @@ export async function listHRRiders(req: Request, res: Response, next: NextFuncti
 
 export async function getRiderHR(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const { getHRRiderFromPicker } = await import('./pickerOps.bridge');
+    const bridged = await getHRRiderFromPicker(req.params.riderId);
+    if (bridged) { res.json(ResponseFormatter.success(bridged)); return; }
     const rider = await RiderHR.findOne({ id: req.params.riderId }).lean();
     if (!rider) { res.status(404).json(ResponseFormatter.error('Rider not found', 404)); return; }
     res.json(ResponseFormatter.success(rider));
@@ -578,6 +597,9 @@ export async function getRiderHR(req: Request, res: Response, next: NextFunction
 
 export async function updateRiderHR(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const { updateHRRiderOnPicker } = await import('./pickerOps.bridge');
+    const bridged = await updateHRRiderOnPicker(req.params.riderId, req.body || {});
+    if (bridged) { res.json(ResponseFormatter.success(bridged)); return; }
     const rider = await RiderHR.findOneAndUpdate({ id: req.params.riderId }, req.body, { new: true });
     if (!rider) { res.status(404).json(ResponseFormatter.error('Rider not found', 404)); return; }
     res.json(ResponseFormatter.success(rider));
@@ -586,6 +608,9 @@ export async function updateRiderHR(req: Request, res: Response, next: NextFunct
 
 export async function approveOnboarding(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const { approveHRRiderOnPicker } = await import('./pickerOps.bridge');
+    const bridged = await approveHRRiderOnPicker(req.params.riderId);
+    if (bridged) { res.json(ResponseFormatter.success(bridged)); return; }
     const rider = await RiderHR.findOneAndUpdate(
       { id: req.params.riderId },
       { onboardingStatus: 'approved', status: 'active', appAccess: 'enabled' },
@@ -627,6 +652,16 @@ export async function markModuleComplete(req: Request, res: Response, next: Next
 export async function listDashboardNotifications(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { read, page, limit } = req.query as Record<string, string>;
+    const { listNotificationsFromPickers } = await import('./pickerOps.bridge');
+    const bridged = await listNotificationsFromPickers({
+      read: read === undefined ? undefined : read === 'true',
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 20,
+    });
+    if (bridged.total > 0) {
+      res.json(ResponseFormatter.success(bridged));
+      return;
+    }
     const query: Record<string, unknown> = {};
     if (read !== undefined) query.read = read === 'true';
     const skip = ((parseInt(page) || 1) - 1) * (parseInt(limit) || 20);
@@ -660,16 +695,9 @@ export async function search(req: Request, res: Response, next: NextFunction): P
 
 export async function getDashboardCounts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const counts = await cached('rider:dashboard:counts', async () => {
-      const { Rider: RiderModel } = await import('./rider.models');
-      const [online, busy, offline, idle] = await Promise.all([
-        RiderModel.countDocuments({ status: 'online' }),
-        RiderModel.countDocuments({ status: 'busy' }),
-        RiderModel.countDocuments({ status: 'offline' }),
-        RiderModel.countDocuments({ status: 'idle' }),
-      ]);
-      return { online, busy, offline, idle, total: online + busy + offline + idle };
-    });
+    // Prefer picker_users (Rider App source of truth). Short TTL so go-online shows up quickly.
+    const { getPickerFleetCounts } = await import('./pickerFleet.bridge');
+    const counts = await cached('rider:dashboard:counts:picker', () => getPickerFleetCounts(), 5);
     res.json(ResponseFormatter.success(counts));
   } catch (err) { next(err); }
 }
@@ -720,14 +748,17 @@ export async function listAuditLogs(req: Request, res: Response, next: NextFunct
 
 export async function getHRDashboardSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const summary = await cached('hr:dashboard:summary', async () => {
+    const summary = await cached('hr:dashboard:summary:picker', async () => {
+      const { getHRDashboardSummaryFromPickers } = await import('./pickerOps.bridge');
+      const fromPickers = await getHRDashboardSummaryFromPickers();
+      if (fromPickers.total > 0) return fromPickers;
       const [total, pendingOnboarding, pendingDocuments] = await Promise.all([
         RiderHR.countDocuments({}),
         RiderHR.countDocuments({ onboardingStatus: 'pending' }),
         RiderHR.countDocuments({ onboardingStatus: 'documents_pending' }),
       ]);
       return { total, pendingOnboarding, pendingDocuments };
-    });
+    }, 5);
     res.json(ResponseFormatter.success(summary));
   } catch (err) { next(err); }
 }
@@ -735,7 +766,14 @@ export async function getHRDashboardSummary(req: Request, res: Response, next: N
 export async function listDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { status, riderId, page, limit } = req.query as Record<string, string>;
-    res.json(ResponseFormatter.success({ documents: [], total: 0, status, riderId, page: parseInt(page) || 1, limit: parseInt(limit) || 50 }));
+    const { listDocumentsFromPickers } = await import('./pickerOps.bridge');
+    const bridged = await listDocumentsFromPickers({
+      status,
+      riderId,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+    });
+    res.json(ResponseFormatter.success(bridged));
   } catch (err) { next(err); }
 }
 
@@ -860,7 +898,20 @@ export async function onboardRider(req: Request, res: Response, next: NextFuncti
 
 export async function sendRiderReminder(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.json(ResponseFormatter.success({ riderId: req.params.riderId, reminderSent: true }));
+    const riderId = req.params.riderId;
+    const message = (req.body?.message as string) || 'Please complete your pending documents / check in for your shift.';
+    if (mongoose.isValidObjectId(riderId)) {
+      const { PickerNotification } = await import('../picker/picker.models');
+      await PickerNotification.create({
+        userId: riderId,
+        type: 'admin_reminder',
+        title: 'Admin reminder',
+        body: message,
+        data: { source: 'admin_hr' },
+        read: false,
+      });
+    }
+    res.json(ResponseFormatter.success({ riderId, reminderSent: true, source: 'picker_notifications' }));
   } catch (err) { next(err); }
 }
 

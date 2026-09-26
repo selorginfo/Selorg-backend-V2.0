@@ -104,7 +104,33 @@ export function authenticateAdmin(req: Request, res: Response, next: NextFunctio
       return;
     }
     // Defense in depth: every admin session must carry an admin-capable role claim.
-    const adminCapableRoles = new Set(['admin', 'super_admin', 'manager', 'ops', 'support', 'finance', 'catalog']);
+    // Includes console roles used by store-/warehouse-/ops-scoped dashboard logins
+    // (e.g. Dark Store Manager → `darkstore`).
+    const adminCapableRoles = new Set([
+      'admin',
+      'super_admin',
+      'manager',
+      'ops',
+      'support',
+      'finance',
+      'catalog',
+      'darkstore',
+      'dark_store_manager',
+      'store_manager',
+      'warehouse',
+      'warehouse_manager',
+      'warehouse_ops',
+      'rider',
+      'rider_manager',
+      'vendor',
+      'production',
+      'merch',
+      'operations_admin',
+      'operations',
+      'customer_support',
+      'finance_admin',
+      'catalog_manager',
+    ]);
     if (claimRole && !adminCapableRoles.has(claimRole) && claimRole !== '*') {
       // Allow directory roleIds (ObjectId strings) — those are looked up via permissions.
       const looksLikeObjectId = /^[a-f0-9]{24}$/i.test(claimRole);

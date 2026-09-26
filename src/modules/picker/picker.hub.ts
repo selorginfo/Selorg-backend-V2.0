@@ -12,7 +12,7 @@ export const ADYAR_HUB = {
   isActive: true,
   coordinates: { latitude: 13.0067, longitude: 80.2206 },
   geo: { type: 'Point' as const, coordinates: [80.2206, 13.0067] as [number, number] },
-  geofenceRadius: 250,
+  geofenceRadius: 5000,
   dispatchBays: 8,
 };
 

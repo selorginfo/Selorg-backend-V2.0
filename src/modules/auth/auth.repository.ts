@@ -39,8 +39,16 @@ export function findOtpSessionById(sessionId: string) {
   return OtpSession.findOne({ sessionId });
 }
 
+/** Match 10-digit, 91…, and +91… so an existing account is found either way. */
+export function phoneLookupFilter(phoneNumber: string): Record<string, unknown> {
+  const raw = String(phoneNumber || '').trim();
+  const digits = raw.replace(/\D/g, '').slice(-10);
+  const variants = [...new Set([raw, digits, digits ? `+91${digits}` : '', digits ? `91${digits}` : ''].filter(Boolean))];
+  return variants.length ? { phoneNumber: { $in: variants } } : { phoneNumber: raw };
+}
+
 export function findCustomerByPhone(phoneNumber: string, excludeId?: string) {
-  const filter: Record<string, unknown> = { phoneNumber };
+  const filter: Record<string, unknown> = phoneLookupFilter(phoneNumber);
   if (excludeId) filter._id = { $ne: excludeId };
   return CustomerUser.findOne(filter).select('_id phoneVerified').lean();
 }
@@ -67,10 +75,10 @@ export async function upsertCustomerUser(session: Pick<IOtpSession, 'email' | 'p
 
   const existingUser = isEmailLogin
     ? await CustomerUser.findOne({ email: session.email }).lean()
-    : await CustomerUser.findOne({ phoneNumber: session.phoneNumber }).lean();
+    : await CustomerUser.findOne(phoneLookupFilter(session.phoneNumber || '')).lean();
   const isNewUser = !existingUser;
 
-  const filter = isEmailLogin ? { email: session.email } : { phoneNumber: session.phoneNumber };
+  const filter = isEmailLogin ? { email: session.email } : phoneLookupFilter(session.phoneNumber || '');
   const setFields = isEmailLogin ? { lastLogin: now } : { phoneVerified: true, phoneVerifiedAt: now, lastLogin: now };
   const insertFields = isEmailLogin ? { email: session.email, status: 'active' } : { phoneNumber: session.phoneNumber, status: 'active' };
 

@@ -31,7 +31,7 @@ export async function getRealtimeMetrics(range?: Range) {
   const prevEnd = new Date(start);
   const prevStart = new Date(prevEnd.getTime() - (end.getTime() - start.getTime()));
 
-  const [currentAgg, prevAgg, uniqueUsers] = await Promise.all([
+  const [currentAgg, prevAgg, uniqueUsers, realizedAgg] = await Promise.all([
     Order.aggregate([
       { $match: { createdAt: { $gte: start, $lte: end }, status: { $nin: ['cancelled'] } } },
       { $group: { _id: null, totalRevenue: { $sum: '$totalBill' }, totalOrders: { $sum: 1 } } },
@@ -43,18 +43,36 @@ export async function getRealtimeMetrics(range?: Range) {
       { $project: { _id: 0, totalRevenue: 1, totalOrders: 1 } },
     ]),
     Order.distinct('userId', { createdAt: { $gte: start, $lte: end } }),
+    // Realized revenue: paid only (COD pending is NOT realized until deposit settles paymentStatus=paid)
+    Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: start, $lte: end },
+          status: { $nin: ['cancelled'] },
+          paymentStatus: 'paid',
+        },
+      },
+      { $group: { _id: null, realizedRevenue: { $sum: '$totalBill' }, paidOrders: { $sum: 1 } } },
+    ]),
   ]);
 
   const curr = currentAgg[0] || { totalRevenue: 0, totalOrders: 0 };
   const prev = prevAgg[0] || { totalRevenue: 0, totalOrders: 0 };
+  const realized = realizedAgg[0] || { realizedRevenue: 0, paidOrders: 0 };
 
   const revenueGrowth = prev.totalRevenue > 0 ? Math.round(((curr.totalRevenue - prev.totalRevenue) / prev.totalRevenue) * 1000) / 10 : 0;
   const ordersGrowth = prev.totalOrders > 0 ? Math.round(((curr.totalOrders - prev.totalOrders) / prev.totalOrders) * 1000) / 10 : 0;
   const aov = curr.totalOrders > 0 ? Math.round(curr.totalRevenue / curr.totalOrders) : 0;
 
   return {
-    totalRevenue: curr.totalRevenue,
+    /** Gross order value (includes COD pending) — not realized cash. */
+    orderValue: curr.totalRevenue,
+    /** Realized revenue: paymentStatus === paid only. */
+    totalRevenue: realized.realizedRevenue,
+    realizedRevenue: realized.realizedRevenue,
+    pendingCodValue: Math.max(0, curr.totalRevenue - realized.realizedRevenue),
     totalOrders: curr.totalOrders,
+    paidOrders: realized.paidOrders,
     activeUsers: uniqueUsers.length,
     conversionRate: 0,
     averageOrderValue: aov,

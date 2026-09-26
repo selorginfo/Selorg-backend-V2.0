@@ -327,6 +327,8 @@ export function computeMonthlyPayroll(input: MonthlyPayrollInput): MonthlyPayrol
   const asOfKey = hubDateKey(asOf);
   const monthEndKey = hubDateKey(to);
   const lastCountableKey = asOfKey < monthEndKey ? asOfKey : monthEndKey;
+  /** Fixed monthly salary (₹13,000 default): do not treat missing punches as unpaid leave until the month has closed. */
+  const monthClosed = asOfKey >= monthEndKey;
 
   let presentDays = 0;
   let halfDays = 0;
@@ -359,7 +361,10 @@ export function computeMonthlyPayroll(input: MonthlyPayrollInput): MonthlyPayrol
       continue;
     }
 
-    // Absent: paid week-off is non-deductible; other absences are unpaid leave
+    // In-progress month: keep fixed monthly salary — no leave deduction for days not yet worked.
+    if (!monthClosed) continue;
+
+    // Month closed: paid week-off is non-deductible; other absences are unpaid leave
     if (isPaidWeekOff) continue;
     if (isWeekOff && !isPaidWeekOff) {
       // Extra week-off weekday beyond allowance (e.g. 5th Sunday) → unpaid if not worked

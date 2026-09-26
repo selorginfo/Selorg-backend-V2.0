@@ -32,6 +32,62 @@ export async function getCashInHand(pickerId: string): Promise<number> {
   return Math.max(0, Math.round(result?.net || 0));
 }
 
+export type CodTransferStatus = 'clear' | 'pending_transfer' | 'blocked';
+
+export interface CodTransferGateDto {
+  cashInHand: number;
+  cashInHandDisplay: string;
+  allowedCarry: number;
+  /** True when float is at/under carry limit — rider may go online. */
+  canGoOnline: boolean;
+  /** True when undeposited COD must be transferred before going online. */
+  codTransferRequired: boolean;
+  transferStatus: CodTransferStatus;
+  transferMessage: string | null;
+}
+
+/**
+ * Whether the rider still owes undeposited COD to the company.
+ * Any float above the offline carry limit blocks the next day's online toggle.
+ */
+export async function getCodTransferGate(pickerId: string): Promise<CodTransferGateDto> {
+  const cashInHand = await getCashInHand(pickerId);
+  const allowedCarry = pickerConfig.codOfflineCarryLimit;
+  const codTransferRequired = cashInHand > allowedCarry;
+  const transferStatus: CodTransferStatus = codTransferRequired
+    ? 'blocked'
+    : cashInHand > 0
+      ? 'pending_transfer'
+      : 'clear';
+  return {
+    cashInHand,
+    cashInHandDisplay: rupees(cashInHand),
+    allowedCarry,
+    canGoOnline: !codTransferRequired,
+    codTransferRequired,
+    transferStatus,
+    transferMessage: codTransferRequired
+      ? `Transfer your COD cash (${rupees(cashInHand)}) to the company before going online.`
+      : null,
+  };
+}
+
+/** Throws COD_TRANSFER_REQUIRED when undeposited float blocks going online. */
+export async function assertCodTransferredForOnline(pickerId: string): Promise<void> {
+  const gate = await getCodTransferGate(pickerId);
+  if (!gate.codTransferRequired) return;
+  throw new AppError(
+    gate.transferMessage || `Transfer your COD cash (${gate.cashInHandDisplay}) before going online.`,
+    409,
+    'COD_TRANSFER_REQUIRED',
+    {
+      cashInHand: gate.cashInHand,
+      allowedCarry: gate.allowedCarry,
+      transferStatus: gate.transferStatus,
+    },
+  );
+}
+
 async function sumForDay(pickerId: string, direction: 'in' | 'out', day: Date): Promise<number> {
   const [result] = await PickerCashLedger.aggregate<{ total: number }>([
     {
@@ -117,12 +173,16 @@ export interface CashSummaryDto {
   depositedToday: number;
   pendingDeposits: number;
   canGoOffline: boolean;
+  canGoOnline: boolean;
+  codTransferRequired: boolean;
+  transferStatus: CodTransferStatus;
+  transferMessage: string | null;
 }
 
 export async function getCashSummary(pickerId: string): Promise<CashSummaryDto> {
   const today = new Date();
-  const [cashInHand, collectedToday, depositedToday, pendingAgg, deadline] = await Promise.all([
-    getCashInHand(pickerId),
+  const [gate, collectedToday, depositedToday, pendingAgg, deadline] = await Promise.all([
+    getCodTransferGate(pickerId),
     sumForDay(pickerId, 'in', today),
     sumForDay(pickerId, 'out', today),
     PickerCashLedger.aggregate<{ total: number }>([
@@ -134,16 +194,20 @@ export async function getCashSummary(pickerId: string): Promise<CashSummaryDto> 
   ]);
 
   return {
-    cashInHand,
-    cashInHandDisplay: rupees(cashInHand),
+    cashInHand: gate.cashInHand,
+    cashInHandDisplay: gate.cashInHandDisplay,
     depositLimit: pickerConfig.codDepositLimit,
-    limitExceeded: cashInHand > pickerConfig.codDepositLimit,
+    limitExceeded: gate.cashInHand > pickerConfig.codDepositLimit,
     depositDueBy: deadline.dueAt ? deadline.dueAt.toISOString() : null,
     depositDueDisplay: deadline.display,
     collectedToday,
     depositedToday,
     pendingDeposits: Math.round(pendingAgg[0]?.total || 0),
-    canGoOffline: cashInHand <= pickerConfig.codOfflineCarryLimit,
+    canGoOffline: gate.cashInHand <= pickerConfig.codOfflineCarryLimit,
+    canGoOnline: gate.canGoOnline,
+    codTransferRequired: gate.codTransferRequired,
+    transferStatus: gate.transferStatus,
+    transferMessage: gate.transferMessage,
   };
 }
 
@@ -194,7 +258,7 @@ export async function listCashTransactions(
     type: row.type,
     amount: row.amount,
     direction: row.direction,
-    label: row.label || (row.type === 'deposit' ? 'Deposit to Selorg wallet' : 'COD collected'),
+    label: row.label || (row.type === 'deposit' ? 'COD transfer to company' : 'COD collected'),
     amountDisplay: signedRupees(row.amount, row.direction),
     time: timeOfDayDisplay(new Date(row.createdAt)),
     createdAt: new Date(row.createdAt).toISOString(),
@@ -302,7 +366,7 @@ export async function recordDeposit(
     type: 'deposit',
     amount: input.amount,
     direction: 'out',
-    label: 'Deposit to Selorg wallet',
+    label: 'COD transfer to company',
     method: input.method,
     ref,
     hubKey,

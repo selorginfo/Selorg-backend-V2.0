@@ -76,6 +76,15 @@ const ROLE_DEFAULT_PERMISSIONS: Record<string, string[]> = Object.freeze({
     'analytics.reports.read',
     'operations.*',
   ],
+  dark_store_manager: [
+    'inventory.*',
+    'orders.*',
+    'catalog.products.read',
+    'catalog.categories.read',
+    'delivery.track.read',
+    'analytics.reports.read',
+    'operations.*',
+  ],
   store_manager: ['inventory.*', 'orders.read', 'orders.cancel', 'analytics.reports.read'],
   warehouse_ops: [
     'warehouse.transfer.read',

@@ -29,18 +29,42 @@ export async function listRiders(filters: { status?: string; zone?: string; sear
   const page = pagination.page || 1;
   const limit = pagination.limit || 50;
 
-  const query: Record<string, unknown> = {};
-  if (status) query.status = status;
-  if (zone) query.zone = { $regex: zone, $options: 'i' };
-  if (search) query.$or = [{ name: { $regex: search, $options: 'i' } }, { id: { $regex: search, $options: 'i' } }];
+  const {
+    listPickerFleetUsers,
+    mapPickerToLiveMapRider,
+  } = await import('./pickerFleet.bridge');
 
+  let riders = (await listPickerFleetUsers(500)).map(mapPickerToLiveMapRider);
+
+  if (status) {
+    const s = status.toLowerCase();
+    riders = riders.filter((r) => String(r.status).toLowerCase() === s);
+  }
+  if (zone) {
+    const z = zone.toLowerCase();
+    riders = riders.filter((r) => String(r.zone || r.hub || '').toLowerCase().includes(z));
+  }
+  if (search) {
+    const q = search.toLowerCase();
+    riders = riders.filter(
+      (r) =>
+        String(r.name || '').toLowerCase().includes(q) ||
+        String(r.id || '').toLowerCase().includes(q) ||
+        String(r.phone || '').includes(q),
+    );
+  }
+
+  const total = riders.length;
   const skip = (page - 1) * limit;
-  const [riders, total] = await Promise.all([Rider.find(query).sort({ name: 1 }).skip(skip).limit(limit).lean(), Rider.countDocuments(query)]);
-
-  return { riders, total, page, limit, totalPages: Math.ceil(total / limit) };
+  return { riders: riders.slice(skip, skip + limit), total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 }
 
 export async function getRiderById(riderId: string) {
+  const { findPickerFleetUser, mapPickerToLiveMapRider, mapPickerToAdminDirectory } = await import('./pickerFleet.bridge');
+  const picker = await findPickerFleetUser(riderId);
+  if (picker) {
+    return { ...mapPickerToLiveMapRider(picker), ...mapPickerToAdminDirectory(picker) };
+  }
   const rider = await Rider.findOne({ id: riderId }).lean();
   if (!rider) {
     const err: NodeJS.ErrnoException = new Error('Rider not found');
@@ -51,6 +75,49 @@ export async function getRiderById(riderId: string) {
 }
 
 export async function updateRider(riderId: string, updateData: Record<string, unknown>) {
+  const { findPickerFleetUser, mapPickerToAdminDirectory } = await import('./pickerFleet.bridge');
+  const { PickerUser } = await import('../picker/picker.models');
+
+  const picker = await findPickerFleetUser(riderId);
+  if (picker) {
+    if (Object.keys(updateData).length === 0) {
+      throw Object.assign(new Error('At least one field must be provided'), { statusCode: 400 });
+    }
+    const $set: Record<string, unknown> = {};
+    if (updateData.name !== undefined) $set.name = String(updateData.name);
+    if (updateData.zone !== undefined || updateData.hub !== undefined || updateData.darkStore !== undefined) {
+      $set.currentLocationId = String(updateData.hub || updateData.darkStore || updateData.zone);
+    }
+    if (updateData.vehicleType !== undefined || updateData.vehicle !== undefined) {
+      $set.vehicleType = String(updateData.vehicleType || updateData.vehicle);
+    }
+    if (updateData.deliveryMode !== undefined || updateData.deliveryType !== undefined) {
+      $set.deliveryMode = String(updateData.deliveryMode || updateData.deliveryType);
+    }
+    if (updateData.status !== undefined) {
+      const s = String(updateData.status).toLowerCase();
+      if (s === 'offline' || s === 'inactive') {
+        $set.isOnline = false;
+        $set.onlineSince = null;
+        if (s === 'inactive') $set.status = 'INACTIVE';
+      } else if (s === 'online' || s === 'idle' || s === 'busy') {
+        $set.isOnline = true;
+        if (!$set.onlineSince) $set.onlineSince = new Date();
+        if (s === 'online' || s === 'idle') {
+          /* keep ACTIVE */
+        }
+      } else if (['active', 'approved', 'approve'].includes(s)) {
+        $set.status = 'ACTIVE';
+      } else if (['suspended', 'suspend'].includes(s)) {
+        $set.status = 'SUSPENDED';
+        $set.isOnline = false;
+      }
+    }
+    const updated = await PickerUser.findByIdAndUpdate(picker._id, { $set }, { new: true }).lean();
+    if (!updated) throw Object.assign(new Error('Rider not found'), { statusCode: 404 });
+    return mapPickerToAdminDirectory(updated as Parameters<typeof mapPickerToAdminDirectory>[0]);
+  }
+
   const rider = await Rider.findOne({ id: riderId });
   if (!rider) {
     const err = Object.assign(new Error('Rider not found'), { statusCode: 404 });
@@ -69,6 +136,11 @@ export async function updateRider(riderId: string, updateData: Record<string, un
 type IRiderStatus = 'online' | 'offline' | 'busy' | 'idle';
 
 export async function getRiderLocation(riderId: string) {
+  const { findPickerFleetUser } = await import('./pickerFleet.bridge');
+  const picker = await findPickerFleetUser(riderId);
+  if (picker?.gpsLocation?.latitude != null && picker.gpsLocation?.longitude != null) {
+    return { lat: picker.gpsLocation.latitude, lng: picker.gpsLocation.longitude, timestamp: picker.gpsLocation.timestamp };
+  }
   const rider = await Rider.findOne({ id: riderId }).select('location').lean() as any;
   if (!rider) throw Object.assign(new Error('Rider not found'), { statusCode: 404 });
   if (!rider.location) throw Object.assign(new Error('Rider location not available'), { statusCode: 404 });
@@ -76,18 +148,33 @@ export async function getRiderLocation(riderId: string) {
 }
 
 export async function getRiderDistribution() {
-  const riders = await Rider.find({ status: { $in: ['idle', 'busy'] } }).select('id name status location').lean();
-  const idle = riders.filter((r) => r.status === 'idle').length;
-  const busy = riders.filter((r) => r.status === 'busy').length;
+  const { listPickerFleetUsers, mapPickerToLiveMapRider } = await import('./pickerFleet.bridge');
+  const users = await listPickerFleetUsers(500);
+  const live = users.map(mapPickerToLiveMapRider).filter((r) => r.status === 'idle' || r.status === 'busy' || r.status === 'online');
+  const idle = live.filter((r) => r.status === 'idle' || r.status === 'online').length;
+  const busy = live.filter((r) => r.status === 'busy').length;
   return {
     idleRiders: idle,
     busyRiders: busy,
     totalRiders: idle + busy,
-    riders: riders.map((r) => ({ id: r.id, name: r.name, status: r.status, location: r.location })),
+    riders: live.map((r) => ({ id: r.id, name: r.name, status: r.status, location: r.location })),
   };
 }
 
 export async function searchRiders(query: string, limit = 10) {
+  const { listPickerFleetUsers, mapPickerToLiveMapRider } = await import('./pickerFleet.bridge');
+  const q = query.toLowerCase();
+  const fromPicker = (await listPickerFleetUsers(200))
+    .map(mapPickerToLiveMapRider)
+    .filter(
+      (r) =>
+        String(r.name || '').toLowerCase().includes(q) ||
+        String(r.id || '').includes(q) ||
+        String(r.phone || '').includes(q) ||
+        String(r.hub || '').toLowerCase().includes(q),
+    )
+    .slice(0, limit);
+  if (fromPicker.length) return fromPicker;
   const regex = { $regex: query, $options: 'i' };
   return Rider.find({ $or: [{ id: regex }, { name: regex }] }).limit(limit).lean();
 }

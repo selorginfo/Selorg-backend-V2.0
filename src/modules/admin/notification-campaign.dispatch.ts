@@ -23,6 +23,7 @@ import { Notification, PushToken } from '../notifications/notifications.model';
 import { CATEGORY_LIST } from '../notifications/notifications.constants';
 import { sendToTokens } from '../../services/fcm.service';
 import { sendTransactionalEmail } from '../../services/email.service';
+import { orderRealtime } from '../../realtime/orderRealtime';
 import {
   NotificationCampaign,
   NotificationHistory,
@@ -211,7 +212,7 @@ export async function dispatchCampaign(
 
       try {
         if (channel === 'in-app') {
-          await Notification.create({
+          const created = await Notification.create({
             userId: user._id,
             title,
             body,
@@ -221,6 +222,7 @@ export async function dispatchCampaign(
             channelsAttempted: ['in-app'],
             channelsDelivered: ['in-app'],
           });
+          orderRealtime.publishInboxNotification(String(user._id), created);
           history.push({ ...row, channel: 'in-app', status: 'sent' });
           result.sent++;
         } else if (channel === 'email') {
@@ -425,7 +427,7 @@ export async function resendHistoryRow(historyId: string): Promise<boolean> {
 
   try {
     if (row.channel === 'in-app') {
-      await Notification.create({
+      const created = await Notification.create({
         userId: user._id,
         title,
         body,
@@ -434,6 +436,7 @@ export async function resendHistoryRow(historyId: string): Promise<boolean> {
         channelsAttempted: ['in-app'],
         channelsDelivered: ['in-app'],
       });
+      orderRealtime.publishInboxNotification(String(user._id), created);
       sent = true;
     } else if (row.channel === 'email') {
       if (!user.email) failureReason = 'No email address on file';

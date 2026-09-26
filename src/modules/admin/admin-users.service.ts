@@ -18,19 +18,102 @@ const OTP_MAX_ATTEMPTS = 5;
 
 const DASHBOARD_ROLES = ['darkstore', 'production', 'merch', 'rider', 'finance', 'warehouse', 'admin', 'vendor'];
 
+/**
+ * Map a directory Role display name (or template key) onto the dashboard login role
+ * stored in the shared `users` collection.
+ */
 function getDashboardRole(roleName?: string | null): string | null {
   if (!roleName) return null;
-  const r = roleName.toLowerCase().trim();
-  if (DASHBOARD_ROLES.includes(r)) return r;
-  if (r.includes('darkstore')) return 'darkstore';
+  const r = roleName.toLowerCase().trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  if (DASHBOARD_ROLES.includes(r.replace(/\s+/g, ''))) {
+    // rare collapsed form
+  }
+  if (DASHBOARD_ROLES.includes(roleName.toLowerCase().trim())) return roleName.toLowerCase().trim();
+  if (r.includes('dark store') || r.includes('darkstore') || r === 'store manager') return 'darkstore';
   if (r.includes('warehouse')) return 'warehouse';
   if (r.includes('production')) return 'production';
-  if (r.includes('merch')) return 'merch';
+  if (r.includes('merch') || r.includes('catalog')) return 'merch';
   if (r.includes('rider')) return 'rider';
   if (r.includes('finance')) return 'finance';
   if (r.includes('vendor')) return 'vendor';
+  if (r.includes('super admin') || r === 'admin' || r.includes('operations admin')) return 'admin';
   if (r.includes('admin')) return 'admin';
   return null;
+}
+
+function accessLevelFor(accessScope?: string): string {
+  if (accessScope === 'global') return 'Full Access';
+  if (accessScope === 'zone') return 'Zone Limited';
+  return 'Store Limited';
+}
+
+function scopeLabelFor(user: Record<string, any>, role?: Record<string, any> | null): string {
+  const stores: string[] = Array.isArray(user.assignedStores) ? user.assignedStores.filter(Boolean) : [];
+  const primary = user.primaryStoreId ? String(user.primaryStoreId) : '';
+  if (stores.length) return stores.join(', ');
+  if (primary) return primary;
+  if (role?.accessScope === 'store') return 'Unassigned store';
+  if (role?.accessScope === 'zone') return 'Zone Limited';
+  if (role?.accessScope === 'global' || !role) return 'Global';
+  return accessLevelFor(role?.accessScope);
+}
+
+function formatDirectoryUser(user: Record<string, any>, role?: Record<string, any> | null) {
+  const roleName = role?.name || user.roleName || user.role || '—';
+  const statusRaw = String(user.status || 'active').toLowerCase();
+  const accountStatus =
+    statusRaw === 'inactive' || statusRaw === 'suspended' || statusRaw === 'deactivated'
+      ? 'deactivated'
+      : statusRaw === 'invited'
+        ? 'invited'
+        : 'active';
+  const twoFa = user.twoFactorEnabled ? 'On' : 'Off';
+  return {
+    ...user,
+    id: String(user._id || user.id),
+    _id: undefined,
+    password: undefined,
+    role: roleName,
+    roleName,
+    scope: scopeLabelFor(user, role),
+    accessLevel: accessLevelFor(role?.accessScope),
+    accessScope: role?.accessScope || 'global',
+    assignedStores: user.assignedStores || [],
+    primaryStoreId: user.primaryStoreId || '',
+    moduleCount: String(Array.isArray(role?.permissions) ? new Set(role.permissions.map((p: string) => String(p).split('.')[0])).size : user.permissions?.length || 0),
+    sensitiveRights: Array.isArray(role?.permissions)
+      ? role.permissions.filter((p: string) => /refund|delete|approve|assign/i.test(p)).slice(0, 3).join(', ') || '—'
+      : '—',
+    lastLogin: user.lastLogin ? new Date(user.lastLogin).toLocaleString('en-IN') : '—',
+    twoFactor: twoFa,
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
+    accountStatus,
+    flagged: !user.twoFactorEnabled && accountStatus === 'active',
+    status:
+      accountStatus === 'active'
+        ? { label: 'Active', tone: 'green' }
+        : accountStatus === 'invited'
+          ? { label: 'Invited', tone: 'amber' }
+          : { label: 'Deactivated', tone: 'grey' },
+    avatar: deriveAvatar(user.name),
+  };
+}
+
+async function requireStoreAssignmentIfNeeded(
+  role: Record<string, any> | null,
+  assignedStores?: string[],
+  primaryStoreId?: string,
+): Promise<void> {
+  if (!role || role.accessScope !== 'store') return;
+  const stores = (assignedStores || []).map((s) => String(s).trim()).filter(Boolean);
+  const primary = String(primaryStoreId || '').trim();
+  if (!stores.length && !primary) {
+    throw new AppError(
+      'Dark Store Manager (and other store-scoped roles) require at least one assigned dark store.',
+      400,
+      'STORE_ASSIGNMENT_REQUIRED',
+    );
+  }
 }
 
 function deriveAvatar(name?: string | null): string {
@@ -43,12 +126,6 @@ function deriveAvatar(name?: string | null): string {
       .toUpperCase()
       .slice(0, 2) || 'U'
   );
-}
-
-function accessLevelFor(accessScope?: string): string {
-  if (accessScope === 'global') return 'Full Access';
-  if (accessScope === 'zone') return 'Zone Limited';
-  return 'Store Limited';
 }
 
 async function invalidateUsersCache(): Promise<void> {
@@ -85,18 +162,6 @@ async function applyPasswordReset(
   if (sendEmail) {
     await sendAdminPasswordResetEmail({ to: user.email, name: user.name, temporaryPassword: plainPassword });
   }
-}
-
-function formatDirectoryUser(user: Record<string, any>, role?: Record<string, any> | null) {
-  return {
-    ...user,
-    id: String(user._id),
-    _id: undefined,
-    password: undefined,
-    roleName: role?.name,
-    accessLevel: accessLevelFor(role?.accessScope),
-    avatar: deriveAvatar(user.name),
-  };
 }
 
 export async function getUsers(filter: repo.AdminDirectoryFilter) {
@@ -165,6 +230,10 @@ export async function createUser(input: CreateUserInput, createdByEmail?: string
     if (!role) throw AppError.notFound('Role', input.roleId);
   }
 
+  const assignedStores = (input.assignedStores || []).map((s) => String(s).trim()).filter(Boolean);
+  const primaryStoreId = String(input.primaryStoreId || assignedStores[0] || '').trim();
+  await requireStoreAssignmentIfNeeded(role, assignedStores, primaryStoreId);
+
   const hashedPassword = await bcrypt.hash(input.password, 10);
   const created = await repo.createDirectoryUser({
     email,
@@ -179,8 +248,8 @@ export async function createUser(input: CreateUserInput, createdByEmail?: string
     twoFactorEnabled: Boolean(input.twoFactorEnabled),
     startDate: input.startDate ? new Date(input.startDate) : new Date(),
     notes: input.notes || '',
-    assignedStores: input.assignedStores || [],
-    primaryStoreId: input.primaryStoreId || '',
+    assignedStores,
+    primaryStoreId,
     status: 'active',
     emailVerified: Boolean(input.emailVerifiedToken),
   });
@@ -194,8 +263,8 @@ export async function createUser(input: CreateUserInput, createdByEmail?: string
           password: hashedPassword,
           name: created.name,
           role: dashboardRole,
-          assignedStores: input.assignedStores || [],
-          primaryStoreId: input.primaryStoreId || '',
+          assignedStores,
+          primaryStoreId,
         },
         { upsert: true },
       );
@@ -304,6 +373,8 @@ export async function updateUser(id: string, input: UpdateUserInput) {
   if (input.roleId && input.roleId !== user.roleId?.toString()) {
     role = await repo.findRoleByIdRaw(input.roleId);
     if (!role) throw AppError.notFound('Role', input.roleId);
+  } else if (user.roleId) {
+    role = await repo.findRoleByIdRaw(user.roleId.toString());
   }
 
   if (input.name) user.name = input.name;
@@ -318,8 +389,14 @@ export async function updateUser(id: string, input: UpdateUserInput) {
   if (input.location !== undefined) user.location = input.location;
   if (input.notes !== undefined) user.notes = input.notes;
   if (input.assignedStores !== undefined) user.assignedStores = input.assignedStores;
-  if (input.primaryStoreId !== undefined) user.primaryStoreId = input.primaryStoreId;
+  if (input.primaryStoreId !== undefined) {
+    user.primaryStoreId = input.primaryStoreId;
+  } else if (input.assignedStores !== undefined && input.assignedStores.length && !user.primaryStoreId) {
+    user.primaryStoreId = input.assignedStores[0];
+  }
   if (input.twoFactorEnabled !== undefined) user.twoFactorEnabled = input.twoFactorEnabled;
+
+  await requireStoreAssignmentIfNeeded(role, user.assignedStores || [], user.primaryStoreId || '');
 
   await user.save();
 
@@ -329,7 +406,7 @@ export async function updateUser(id: string, input: UpdateUserInput) {
       await repo.upsertDashboardLogin(
         user.email,
         { name: user.name, role: dashboardRole, assignedStores: user.assignedStores || [], primaryStoreId: user.primaryStoreId || '' },
-        { upsert: false },
+        { upsert: true },
       );
     } catch (err) {
       logger.warn('Failed to sync user update to dashboard login', { email: user.email, error: (err as Error).message });
@@ -351,16 +428,49 @@ export async function deleteUser(id: string) {
   await invalidateUsersCache();
 }
 
-export async function assignRole(id: string, roleId: string) {
+export async function assignRole(
+  id: string,
+  roleId: string,
+  opts?: { assignedStores?: string[]; primaryStoreId?: string },
+) {
   const user = await repo.findDirectoryUserByIdRaw(id);
   if (!user) throw AppError.notFound('User', id);
   const role = await repo.findRoleByIdRaw(roleId);
   if (!role) throw AppError.notFound('Role', roleId);
 
+  if (opts?.assignedStores !== undefined) {
+    user.assignedStores = opts.assignedStores.map((s) => String(s).trim()).filter(Boolean);
+  }
+  if (opts?.primaryStoreId !== undefined) {
+    user.primaryStoreId = opts.primaryStoreId;
+  } else if (opts?.assignedStores?.length && !user.primaryStoreId) {
+    user.primaryStoreId = opts.assignedStores[0];
+  }
+
+  await requireStoreAssignmentIfNeeded(role, user.assignedStores || [], user.primaryStoreId || '');
+
   user.roleId = roleId as any;
   user.role = role.name;
   user.permissions = role.permissions;
   await user.save();
+
+  const dashboardRole = getDashboardRole(role.name);
+  if (dashboardRole) {
+    try {
+      await repo.upsertDashboardLogin(
+        user.email,
+        {
+          name: user.name,
+          role: dashboardRole,
+          assignedStores: user.assignedStores || [],
+          primaryStoreId: user.primaryStoreId || '',
+        },
+        { upsert: true },
+      );
+    } catch (err) {
+      logger.warn('Failed to sync role assign to dashboard login', { email: user.email, error: (err as Error).message });
+    }
+  }
 
   await recordAuditLog({ module: 'admin', action: 'role_assign', entityType: 'User', entityId: id, details: { roleId: String(roleId), roleName: role.name } });
   await invalidateUsersCache();

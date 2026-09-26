@@ -10,6 +10,7 @@ import {
 } from './picker.format';
 import { getCashInHand, recordCodCollection } from './picker.cash.service';
 import { creditEarnings } from './picker.service';
+import { assertRiderFreeForNewOrder, deliveryPaymentAllowed } from './rider-lock';
 import { storeProofOfDeliveryPhoto } from './picker.upload.service';
 import { logger } from '../../utils/logger';
 import * as fulfillment from '../orders/fulfillment.service';
@@ -405,6 +406,7 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
     return { id: orderId, riderStage: order!.riderStage || 'accepted', status: order!.status, updatedAt: new Date(order!.updatedAt).toISOString() };
   }
   if ((existing as any).pickerId) throw AppError.conflict('Another rider has already accepted this order.', 'ORDER_ALREADY_ASSIGNED');
+  await assertRiderFreeForNewOrder(pickerId, orderId);
   if ((existing as any).riderStage !== 'offered') {
     throw AppError.conflict('Another rider has already accepted this order.', 'ORDER_ALREADY_ASSIGNED');
   }
@@ -427,7 +429,9 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
     {
       $set: {
         pickerId: userId,
+        riderId: String(pickerId),
         riderStage: 'accepted',
+        fulfillmentStage: 'rider_accepted',
         acceptedAt,
         assignedAt: acceptedAt,
         offerExpiresAt: null,
@@ -437,9 +441,8 @@ async function acceptOrder(pickerId: string, orderId: string): Promise<OrderStat
         ...(hub.key ? { offerHubKey: hub.key } : {}),
         bagCode: bagCodeFor(existing as any),
       },
-      // `status` is deliberately untouched: acceptance is not a customer-visible
-      // milestone, but the timeline records it for the ops feed.
-      $push: { timeline: { status: 'accepted', timestamp: acceptedAt, actor: 'rider', note: 'Rider accepted the order' } },
+      // Customer `status` stays getting-packed until pickup; fulfillmentStage is the ops truth.
+      $push: { timeline: { status: 'accepted', timestamp: acceptedAt, actor: 'rider', userId: pickerId, note: 'Rider accepted the order' } },
     },
     { new: true },
   );
@@ -477,15 +480,17 @@ async function confirmPickup(
 
   const pickedUpAt = new Date();
   order.riderStage = 'picked_up';
+  order.fulfillmentStage = 'rider_picked';
   order.pickedUpAt = pickedUpAt;
   // Pickup *is* customer-visible, and `on-the-way` is the matching status in the
   // existing customer enum.
   if (order.status !== 'on-the-way') order.status = 'on-the-way';
+  if (!order.riderId) order.riderId = String(pickerId);
   order.items = (order.items || []).map((item: any) => ({
     ...item,
     itemStatus: item.itemStatus === 'pending' ? 'picked' : item.itemStatus,
   }));
-  order.timeline.push({ status: 'on-the-way', timestamp: pickedUpAt, actor: 'rider', note: 'Rider picked up the order' });
+  order.timeline.push({ status: 'on-the-way', timestamp: pickedUpAt, actor: 'rider', userId: pickerId, note: 'Rider picked up the order' });
   await order.save();
   void fulfillment.notifyOutForDelivery(order);
 
@@ -520,14 +525,16 @@ async function cancelOrder(
     {
       $set: {
         pickerId: null,
+        riderId: null,
         // Re-offer immediately so the order stays in the rider Live Orders feed.
         riderStage: 'offered',
+        fulfillmentStage: 'packed_in_rack',
         acceptedAt: null,
         pickedUpAt: null,
         riderCancellationReason: reason,
         riderCancellationNote: input.note || '',
         riderCancelledAt: cancelledAt,
-        // Back to the packing state so the hub can re-offer it.
+        // Back to waiting-for-rider so the hub can re-offer it.
         status: 'getting-packed',
         offerExpiresAt: null,
       },
@@ -537,6 +544,7 @@ async function cancelOrder(
           status: 'rider_cancelled',
           timestamp: cancelledAt,
           actor: 'rider',
+          userId: pickerId,
           note: `Rider cancelled (${reason})${input.note ? `: ${input.note}` : ''}`,
         },
       },
@@ -671,6 +679,9 @@ export async function completeDelivery(
   if (order.riderStage !== 'picked_up') {
     throw AppError.conflict('Complete pickup before delivering this order.', 'INVALID_ORDER_STAGE');
   }
+  if (!deliveryPaymentAllowed(order)) {
+    throw AppError.conflict('Payment is not confirmed for this order.', 'PAYMENT_NOT_CONFIRMED');
+  }
 
   if ((order.otpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
     throw new AppError('Too many incorrect attempts. Please contact support.', 429, 'OTP_ATTEMPTS_EXCEEDED');
@@ -703,19 +714,19 @@ export async function completeDelivery(
   const onTime = !order.slaDeadline || deliveredAt <= new Date(order.slaDeadline);
 
   order.riderStage = 'delivered';
+  order.fulfillmentStage = 'delivered';
   order.status = 'delivered';
   order.deliveredAt = deliveredAt;
   order.otpVerified = true;
   order.podPhotoId = podPhotoId;
+  if (!order.riderId) order.riderId = String(pickerId);
   if (expectedCod != null && expectedCod > 0) {
     order.codCollectedAmount = Math.round(input.codCollected as number);
     // COD stays `cod_pending` until the rider deposits the cash (API 48).
-    order.paymentStatus = 'cod_pending';
-  } else if (order.paymentStatus !== 'paid') {
-    order.paymentStatus = 'paid';
+    if (order.paymentStatus !== 'paid') order.paymentStatus = 'cod_pending';
   }
   order.items = (order.items || []).map((item: any) => ({ ...item, itemStatus: 'delivered' }));
-  order.timeline.push({ status: 'delivered', timestamp: deliveredAt, actor: 'rider', note: 'Delivered and verified by OTP' });
+  order.timeline.push({ status: 'delivered', timestamp: deliveredAt, actor: 'rider', userId: pickerId, note: 'Delivered and verified by OTP' });
   await order.save();
 
   if (expectedCod != null && expectedCod > 0) {

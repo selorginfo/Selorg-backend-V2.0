@@ -515,6 +515,7 @@ export async function getSectionProducts(req: Request, res: Response, next: Next
     const section = await HomeSection.findOne({ sectionKey: key, isActive: true }).lean();
     if (section) {
       const { enrichProduct } = await import('../../utils/mediaEnrichment');
+      const { attachLiveSellableStock } = await import('../products/products.stock');
       const ids = section.productIds || [];
       const total = ids.length;
       const start = (page - 1) * limit;
@@ -522,11 +523,12 @@ export async function getSectionProducts(req: Request, res: Response, next: Next
       const products = await Product.find({ _id: { $in: pageIds }, isActive: true }).lean();
       const byId = new Map(products.map((p) => [String(p._id), p]));
       const ordered = pageIds.map((id) => byId.get(String(id))).filter(Boolean).map((p) => enrichProduct(p as any));
+      const withStock = await attachLiveSellableStock(ordered);
       res.status(200).json({
         success: true,
         data: {
           title: section.title,
-          products: ordered,
+          products: withStock,
           pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
         },
       });
@@ -549,6 +551,7 @@ export async function getSectionProducts(req: Request, res: Response, next: Next
     }
 
     const { enrichProduct } = await import('../../utils/mediaEnrichment');
+    const { attachLiveSellableStock } = await import('../products/products.stock');
     const [products, total] = await Promise.all([
       Product.find({ isActive: true }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
       Product.countDocuments({ isActive: true }),
@@ -557,11 +560,12 @@ export async function getSectionProducts(req: Request, res: Response, next: Next
       res.status(404).json({ success: false, message: 'Section not found' });
       return;
     }
+    const withStock = await attachLiveSellableStock(products.map((p) => enrichProduct(p as any)));
     res.status(200).json({
       success: true,
       data: {
         title: definition?.label || key.replace(/_/g, ' '),
-        products: products.map((p) => enrichProduct(p as any)),
+        products: withStock,
         pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
       },
     });

@@ -131,12 +131,9 @@ export async function verifyOtp(req: Request, res: Response, next: NextFunction)
 
     if (order.deliveryOtp === otp) {
       order.otpVerified = true;
-      order.status = 'delivered';
-      order.deliveredAt = new Date();
-      if (order.paymentStatus === 'cod_pending') order.paymentStatus = 'paid';
-      order.timeline.push({ status: 'delivered', timestamp: new Date(), note: 'OTP verified, order delivered', actor: 'rider' });
+      order.timeline.push({ status: order.status, timestamp: new Date(), note: 'Customer confirmed the delivery OTP', actor: 'customer' });
       await order.save();
-      res.status(200).json(ResponseFormatter.success({ verified: true, message: 'OTP verified successfully' }));
+      res.status(200).json(ResponseFormatter.success({ verified: true, message: 'OTP verified. The rider confirms delivery.' }));
     } else {
       await order.save();
       res.status(400).json(ResponseFormatter.error('Invalid OTP', 400, { attemptsRemaining: 5 - order.otpAttempts }));

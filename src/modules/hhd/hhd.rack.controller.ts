@@ -9,6 +9,7 @@ import {
   HHDCompletedOrder,
   HHDPhoto,
   HHDAssignOrder,
+  HHDScannedItem,
 } from './hhd.models';
 import { ORDER_STATUS } from './hhd.constants';
 import { deriveZoneFromRackIdentifier, formatRackSlot } from './hhd.mappers';
@@ -225,6 +226,15 @@ export async function scanRack(req: Request, res: Response, next: NextFunction):
           dispatchBay: parsedRackCode,
           rackCode: parsedRackCode,
         });
+
+        await HHDScannedItem.create({
+          barcodeData: parsedRackCode,
+          barcodeType: 'qr',
+          orderId,
+          userId,
+          metadata: { verdict: 'success', entityType: 'Rack', riderName },
+          scannedAt: new Date(),
+        }).catch(() => undefined);
 
         if (order.status !== ORDER_STATUS.COMPLETED && order.status !== ORDER_STATUS.HANDED_OFF) {
           if (order.status === ORDER_STATUS.RACK_ASSIGNED) {

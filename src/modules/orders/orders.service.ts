@@ -18,6 +18,7 @@ import { buildPaymentMethodPresentation, buildEstimatedDeliveryMessage, inferIns
 import * as orderRepo from './order.repository';
 import { CustomerUser } from '../auth/auth.model';
 import { executeCancellation, canCustomerCancel } from './cancellation.service';
+import { adminLabelForStage, deriveFulfillmentStage } from './order-lifecycle';
 import { getOrCreateWallet, debitWalletForOrder, refundWalletForFailedOrderPayment, roundInr } from '../wallet/wallet.service';
 import { logger } from '../../utils/logger';
 import * as fulfillment from './fulfillment.service';
@@ -171,6 +172,7 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
       timestamp: t.timestamp,
       note: t.note || '',
       actor: t.actor || '',
+      userId: t.userId || '',
     })),
     cancellationReason: o.cancellationReason || '',
     deliveryAddress: deliveryAddress
@@ -234,14 +236,57 @@ function formatOrderForApp(o: Record<string, unknown> & { _worldlinePayment?: Re
     ratingComment: o.ratingComment || '',
     paymentStatus: o.paymentStatus || 'pending',
     storeId: o.storeId ? String(o.storeId) : null,
-    riderId: o.riderId ? String(o.riderId) : null,
+    riderId: o.riderId ? String(o.riderId) : (o.pickerId ? String(o.pickerId) : null),
     pickerId: o.pickerId ? String(o.pickerId) : null,
+    hhdUserId: o.hhdUserId ? String(o.hhdUserId) : null,
+    pickerAssignment: (o.adminFulfillment as { pickerName?: string } | undefined)?.pickerName
+      ? { pickerName: (o.adminFulfillment as { pickerName?: string }).pickerName }
+      : o.hhdUserId
+        ? { pickerName: 'HSD Operator' }
+        : undefined,
+    assignee: (o.adminFulfillment as { pickerName?: string } | undefined)?.pickerName
+      ? {
+          id: o.hhdUserId ? String(o.hhdUserId) : null,
+          name: (o.adminFulfillment as { pickerName?: string }).pickerName,
+        }
+      : o.hhdUserId
+        ? { id: String(o.hhdUserId), name: 'HSD Operator' }
+        : null,
     riderStage: o.riderStage || null,
+    fulfillmentStage: (() => {
+      const stage = deriveFulfillmentStage({
+        status: String(o.status || ''),
+        riderStage: (o.riderStage as string) || null,
+        hhdUserId: o.hhdUserId,
+        fulfillmentStage: (o.fulfillmentStage as string) || null,
+        deliveryFailedAt: (o.deliveryFailedAt as Date | null) || null,
+      });
+      return stage;
+    })(),
+    fulfillmentLabel: adminLabelForStage(
+      deriveFulfillmentStage({
+        status: String(o.status || ''),
+        riderStage: (o.riderStage as string) || null,
+        hhdUserId: o.hhdUserId,
+        fulfillmentStage: (o.fulfillmentStage as string) || null,
+        deliveryFailedAt: (o.deliveryFailedAt as Date | null) || null,
+      }),
+    ),
+    exceptionReason: o.exceptionReason || null,
+    hsdDeviceId: o.hsdDeviceId || null,
+    hsdSessionId: o.hsdSessionId || null,
+    pickerShiftId: o.pickerShiftId || null,
+    bagScannedAt: o.bagScannedAt || null,
+    rackedAt: o.rackedAt || null,
+    pickerAcceptedAt: o.pickerAcceptedAt || null,
+    deliveryType: o.deliveryType || 'standard',
+    riderPayout: o.riderPayout || 0,
     bagCode: o.bagCode || null,
     offerHubKey: o.offerHubKey || null,
     dispatchBay: o.dispatchBay || null,
     acceptedAt: o.acceptedAt || null,
     pickedUpAt: o.pickedUpAt || null,
+    offerExpiresAt: o.offerExpiresAt || null,
   };
 }
 
@@ -440,11 +485,6 @@ export async function reconcileOrderWithLatestWorldlinePayment(userId: string, o
     if (order.fulfillmentReleased !== true && order.paymentStatus !== 'paid') {
       await voidUnpaidOnlineOrder(userId, orderId, latest.statusMessage || 'Payment failed', latest.status === 'cancelled' ? 'cancelled' : 'failed');
     }
-    return;
-  }
-
-  if ((latest.status === 'failed' || latest.status === 'cancelled') && order.status === 'pending' && order.paymentStatus !== 'paid' && order.fulfillmentReleased === false) {
-    await voidUnpaidOnlineOrder(userId, orderId, latest.statusMessage || 'Payment failed', latest.status === 'cancelled' ? 'cancelled' : 'failed');
     return;
   }
 
@@ -650,6 +690,22 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     matchedStoreObjectId = await resolveStoreId(ADYAR_STORE_ID);
   }
 
+  if (matchedStoreObjectId) {
+    const { StoreInventory } = await import('../products/store-inventory.model');
+    for (const line of orderItems) {
+      const row = await StoreInventory.findOne({
+        storeId: matchedStoreObjectId,
+        productId: line.productId,
+        isAvailable: true,
+      }).select('quantity reservedQty').lean();
+      if (!row) continue;
+      const sellable = Math.max(0, Number(row.quantity || 0) - Number(row.reservedQty || 0));
+      if (sellable < Number(line.quantity || 0)) {
+        return { error: `${line.productName || 'This item'} is not available at the nearest store.` };
+      }
+    }
+  }
+
   // --- Selorg Wallet checkout (full or partial) ---
   // Amounts are always computed server-side from live wallet balance + order total.
   let walletDeduction = 0;
@@ -700,13 +756,16 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
   const deferFulfillment = isGatewayPrepayment(storedMethodType);
   let paymentStatus: IOrder['paymentStatus'] = storedMethodType === 'cash' ? 'cod_pending' : 'pending';
 
-  const session = await mongoose.startSession();
+  let session: mongoose.ClientSession | null = null;
   let order!: IOrder;
   let orderNumber = '';
   try {
     const maxCreateAttempts = 5;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxCreateAttempts; attempt++) {
+      // A failed transaction poisons the session. Each attempt gets a new one
+      // so a duplicate-key abort cannot replay the same order number.
+      session = await mongoose.startSession();
       orderNumber = await orderRepo.generateOrderNumber();
       paymentStatus = storedMethodType === 'cash' ? 'cod_pending' : 'pending';
       try {
@@ -827,10 +886,15 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
         break;
       } catch (err) {
         lastErr = err;
-        const mongoCode = (err as { code?: number })?.code;
+        const mongoCode = (err as { code?: number | string; errorResponse?: { code?: number } })?.code;
+        const nestedCode = (err as { errorResponse?: { code?: number }; cause?: { code?: number } })?.errorResponse?.code
+          ?? (err as { cause?: { code?: number } })?.cause?.code;
         const msg = String((err as Error)?.message || '');
         const isDupOrderNumber =
-          mongoCode === 11000 || /orderNumber.*already exists|E11000.*orderNumber/i.test(msg);
+          mongoCode === 11000 ||
+          mongoCode === '11000' ||
+          nestedCode === 11000 ||
+          /orderNumber.*already exists|E11000|duplicate key/i.test(msg);
         const walletFail =
           (err as { code?: string })?.code === 'WALLET_DEBIT_FAILED' ||
           /insufficient wallet|wallet not available/i.test(msg);
@@ -841,6 +905,9 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
           continue;
         }
         throw err;
+      } finally {
+        await session.endSession();
+        session = null;
       }
     }
     if (lastErr) throw lastErr;
@@ -852,7 +919,7 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     }
     throw err;
   } finally {
-    await session.endSession();
+    if (session) await session.endSession();
   }
 
   await cartService.invalidateCartGetCache();
@@ -930,19 +997,59 @@ export async function updateCustomerOrderStatus(orderId: string, newStatus: stri
   const allowed = VALID_TRANSITIONS[order.status];
   if (!allowed || !allowed.includes(newStatus)) return { error: `Cannot transition from "${order.status}" to "${newStatus}"` };
 
+  if (newStatus === 'delivered') {
+    if (order.riderStage !== 'picked_up' && order.fulfillmentStage !== 'rider_picked') {
+      return { error: 'Rider must pick up the order before it can be marked delivered' };
+    }
+    if (!order.otpVerified) {
+      return { error: 'Delivery OTP must be verified by the rider before marking delivered' };
+    }
+    if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'cod_pending') {
+      return { error: 'Payment is not confirmed for this order' };
+    }
+  }
+
+  // Map admin status updates onto fulfillmentStage when possible
+  const stageFromStatus: Record<string, IOrder['fulfillmentStage']> = {
+    confirmed: 'confirmed',
+    'getting-packed': order.fulfillmentStage === 'packed_in_rack' ? 'packed_in_rack' : 'picker_accepted',
+    'on-the-way': 'rider_picked',
+    delivered: 'delivered',
+    cancelled: 'cancelled',
+  };
+
   order.status = newStatus as IOrder['status'];
+  if (stageFromStatus[newStatus]) {
+    order.fulfillmentStage = stageFromStatus[newStatus] as IOrder['fulfillmentStage'];
+  }
   order.timeline.push({ status: newStatus, timestamp: new Date(), note: note || STATUS_NOTE_MAP[newStatus] || '', actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system' });
 
-  if (riderId) order.riderId = String(riderId);
+  if (riderId) {
+    order.riderId = String(riderId);
+  }
+
   if (newStatus === 'delivered') {
     order.deliveredAt = new Date();
-    if (order.paymentStatus === 'cod_pending') order.paymentStatus = 'paid';
+    order.riderStage = 'delivered';
+    order.fulfillmentStage = 'delivered';
   }
   if (newStatus === 'cancelled') {
     order.cancellationReason = note || 'Order cancelled';
+    if (order.riderStage) order.riderStage = 'cancelled';
+    order.fulfillmentStage = 'cancelled';
   }
 
   await order.save();
+
+  // Admin/system cancel must also tear down HHD pick ticket (same as customer cancel).
+  if (newStatus === 'cancelled') {
+    try {
+      await fulfillment.onCustomerOrderCancelled(order);
+    } catch {
+      /* non-fatal — customer_orders already cancelled */
+    }
+  }
+
   notifyOrderStatus(order, newStatus, { actor: actor || STATUS_ACTOR_MAP[newStatus] || 'system' });
   emitOrderStatus(String(order._id), { status: newStatus, orderNumber: order.orderNumber, note: note || '' });
   // Bridge to customer/HHD/rider sockets via eventBus (admin socket alone is not enough).
@@ -1086,7 +1193,14 @@ export async function adminListOrders(
   if (filters.riderId) query.riderId = filters.riderId;
   if (filters.search) {
     const rx = new RegExp(filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    query.$or = [{ orderNumber: rx }, { 'shippingAddress.contactName': rx }, { 'shippingAddress.contactPhone': rx }];
+    query.$or = [
+      { orderNumber: rx },
+      { customerName: rx },
+      { customerPhone: rx },
+      { 'deliveryAddress.line1': rx },
+      { 'shippingAddress.contactName': rx },
+      { 'shippingAddress.contactPhone': rx },
+    ];
   }
   if (filters.date) {
     // Interpret date as IST (UTC+5:30)
@@ -1189,7 +1303,7 @@ export async function adminAddOrderNote(
   return formatOrderForApp(order.toObject());
 }
 
-/** Assign / reassign picker on the customer Order document + timeline. */
+/** Assign / reassign HSD picker (packing operator) — writes hhdUserId, never rider pickerId. */
 export async function adminReassignPicker(
   orderId: string,
   opts: { pickerId: string; pickerName?: string; reason?: string; note?: string; actor?: string },
@@ -1197,23 +1311,33 @@ export async function adminReassignPicker(
   const order = await findOrderDoc(orderId);
   if (!order) return { error: 'Order not found' };
   if (!opts.pickerId) return { error: 'pickerId is required' };
-  if (mongoose.Types.ObjectId.isValid(opts.pickerId)) {
-    order.pickerId = new mongoose.Types.ObjectId(opts.pickerId);
+  if (!mongoose.Types.ObjectId.isValid(opts.pickerId)) {
+    return { error: 'pickerId must be a valid HSD user ObjectId' };
   }
-  const name = opts.pickerName || opts.pickerId;
+
+  const { HHDUser } = await import('../hhd/hhd.models');
+  const hhd = await HHDUser.findById(opts.pickerId).select('name isActive warehouse darkstore').lean();
+  if (!hhd) return { error: 'HSD picker not found' };
+  if ((hhd as { isActive?: boolean }).isActive === false) return { error: 'HSD picker is inactive' };
+
+  const name = opts.pickerName || (hhd as { name?: string }).name || opts.pickerId;
   const reason = opts.reason ? ` (${opts.reason})` : '';
   const extra = opts.note ? ` — ${opts.note}` : '';
+  order.hhdUserId = new mongoose.Types.ObjectId(opts.pickerId);
+  if (!order.adminFulfillment) (order as any).adminFulfillment = {};
+  (order as any).adminFulfillment.pickerName = name;
   order.timeline.push({
     status: order.status,
     timestamp: new Date(),
-    note: `Picker reassigned to ${name}${reason}${extra}`,
+    note: `HSD picker assigned to ${name}${reason}${extra}`,
     actor: opts.actor || 'admin',
+    userId: opts.pickerId,
   });
   await order.save();
   return formatOrderForApp(order.toObject());
 }
 
-/** Assign / reassign rider on the customer Order document + timeline. */
+/** Offer / re-offer a rider. Does NOT mark Rider Accepted — rider must accept in the app. */
 export async function adminReassignRider(
   orderId: string,
   opts: { riderId: string; riderName?: string; reason?: string; note?: string; actor?: string },
@@ -1221,17 +1345,62 @@ export async function adminReassignRider(
   const order = await findOrderDoc(orderId);
   if (!order) return { error: 'Order not found' };
   if (!opts.riderId) return { error: 'riderId is required' };
-  order.riderId = String(opts.riderId);
-  const name = opts.riderName || opts.riderId;
+
+  const { PickerUser } = await import('../picker/picker.models');
+  if (!mongoose.Types.ObjectId.isValid(opts.riderId)) {
+    return { error: 'riderId must be a picker/rider ObjectId' };
+  }
+  const riderUser = await PickerUser.findById(opts.riderId)
+    .select('name status workforceRole activeOrderId isOnline')
+    .lean();
+  if (!riderUser || (riderUser as { workforceRole?: string }).workforceRole === 'picker') {
+    return { error: 'Rider not found' };
+  }
+  if (!(riderUser as { isOnline?: boolean }).isOnline) {
+    return { error: 'Rider must be online in the Rider App before an order can be offered.' };
+  }
+  if (order.riderStage !== 'offered' && order.fulfillmentStage !== 'packed_in_rack' && String(order.pickerId || '') !== opts.riderId) {
+    return { error: 'Order is not ready for a rider. Finish picking and rack handover first.' };
+  }
+  try {
+    const { assertRiderFreeForNewOrder } = await import('../picker/rider-lock');
+    await assertRiderFreeForNewOrder(opts.riderId, String(order._id));
+  } catch (err) {
+    return { error: (err as Error).message || 'Rider is not available' };
+  }
+
+  const previousPickerId = order.pickerId ? String(order.pickerId) : null;
+  const name = opts.riderName || (riderUser as { name?: string }).name || opts.riderId;
   const reason = opts.reason ? ` (${opts.reason})` : '';
   const extra = opts.note ? ` — ${opts.note}` : '';
+  const now = new Date();
+  const { pickerConfig } = await import('../picker/picker.config');
+
+  // Offer only — clear ownership so the named rider (or any hub rider) must accept.
+  order.riderId = null;
+  order.pickerId = null;
+  order.riderStage = 'offered';
+  order.fulfillmentStage = 'packed_in_rack';
+  order.acceptedAt = null;
+  order.offerExpiresAt = new Date(now.getTime() + pickerConfig.offerExpirySeconds * 1000);
+  if (!order.offerHubKey) order.offerHubKey = DEFAULT_HUB_KEY;
+  if (!order.adminFulfillment) (order as any).adminFulfillment = {};
+  (order as any).adminFulfillment.riderName = name;
   order.timeline.push({
     status: order.status,
-    timestamp: new Date(),
-    note: `Rider reassigned to ${name}${reason}${extra}`,
+    timestamp: now,
+    note: `Admin offered order to rider ${name}${reason}${extra} — waiting for accept`,
     actor: opts.actor || 'admin',
   });
   await order.save();
+
+  if (previousPickerId && previousPickerId !== opts.riderId) {
+    await PickerUser.updateOne(
+      { _id: previousPickerId, activeOrderId: String(order._id) },
+      { $unset: { activeOrderId: 1 } },
+    );
+  }
+
   return formatOrderForApp(order.toObject());
 }
 
@@ -1324,7 +1493,15 @@ export async function adminInitiateRefund(
   }
 
   order.refundId = refund._id as unknown as mongoose.Types.ObjectId;
-  order.refundStatus = refund.status;
+  const refundStatusMap: Record<string, IOrder['refundStatus']> = {
+    pending: 'pending',
+    approved: 'approved',
+    rejected: 'rejected',
+    processed: 'processed',
+    completed: 'processed',
+    escalated: 'pending',
+  };
+  order.refundStatus = refundStatusMap[refund.status] || 'pending';
   order.refundAmount = amount;
   order.timeline.push({
     status: order.status,

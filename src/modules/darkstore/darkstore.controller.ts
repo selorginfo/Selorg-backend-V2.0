@@ -5,6 +5,11 @@ import * as svc from './darkstore.service';
 import { WDTransferRequest, WDTransferLog } from '../warehouse/warehouse.models';
 import { WarehouseInventory, StoreInventory } from '../products/store-inventory.model';
 import { DarkStore } from '../store/dark-store.model';
+import {
+  assertStoreAccess,
+  getAssignedStoreKeys,
+  isStoreScopedUser,
+} from '../../utils/store-scope';
 
 /** Shared 501 for darkstore surfaces that previously answered success without doing work. */
 async function notImplemented(req: Request, res: Response, what: string): Promise<void> {
@@ -12,8 +17,31 @@ async function notImplemented(req: Request, res: Response, what: string): Promis
   await completeOpsAction(req, res, what);
 }
 
+/**
+ * Resolve the effective store id for this request.
+ * Store-scoped users (Dark Store Manager) are locked to their assigned store —
+ * a mismatched query/body storeId is rejected rather than silently ignored.
+ */
 function storeId(req: Request): string {
-  return (req.query.storeId || req.query.store_id || req.body?.store_id || process.env.DEFAULT_STORE_ID || 'DS-Adyar-01') as string;
+  const requested = String(
+    req.query.storeId || req.query.store_id || req.body?.store_id || req.body?.storeId || '',
+  ).trim();
+  const assigned = getAssignedStoreKeys(req.user);
+
+  if (isStoreScopedUser(req.user)) {
+    if (!assigned.length) {
+      // assertStoreAccess throws STORE_SCOPE_REQUIRED
+      assertStoreAccess(req.user, undefined);
+    }
+    const primary = assigned[0]!;
+    if (requested) {
+      assertStoreAccess(req.user, requested);
+      return requested;
+    }
+    return primary;
+  }
+
+  return requested || process.env.DEFAULT_STORE_ID || 'DS-Adyar-01';
 }
 
 /** Resolve a dark store Mongo ObjectId from either an ObjectId string or a store code. */

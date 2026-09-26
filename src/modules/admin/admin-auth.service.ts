@@ -25,13 +25,48 @@ export async function login(email: string, password: string, requestedRole = 'ad
   if (!user) return null;
 
   const userRoleLower = user.role ? user.role.toLowerCase().trim() : '';
-  const requestedRoleLower = requestedRole ? requestedRole.toLowerCase().trim() : '';
+  // SPA sends "Operations Admin" OR underscore form "operations_admin" (authService.real.ts).
+  const requestedRoleLower = (requestedRole || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
   if (requestedRole && user.role) {
-    // Treat 'admin', 'super_admin', 'superadmin', and 'Super Admin' as equivalent.
+    // Treat backend admin roles and Admin SPA console role labels as equivalent for login.
+    // The SPA sends display labels like "Operations Admin" / "Super Admin"; the users
+    // collection typically stores `admin` / `super_admin` / `darkstore`.
     const adminAliases = new Set(['admin', 'super_admin', 'superadmin', 'super admin']);
-    const userIsAdmin = adminAliases.has(userRoleLower);
-    const requestedIsAdmin = adminAliases.has(requestedRoleLower);
-    const roleMatches = userRoleLower === requestedRoleLower || (userIsAdmin && requestedIsAdmin);
+    const consoleRoleAliases = new Set([
+      ...adminAliases,
+      'operations admin',
+      'rider manager',
+      'warehouse manager',
+      'dark store manager',
+      'customer support',
+      'finance admin',
+      'catalog manager',
+    ]);
+    const userNormalized = userRoleLower.replace(/[_-]+/g, ' ');
+    const userIsAdmin = adminAliases.has(userNormalized);
+    const requestedIsConsoleRole = consoleRoleAliases.has(requestedRoleLower);
+
+    // Map short dashboard-login keys onto the SPA console labels.
+    const dashboardToConsole: Record<string, string> = {
+      admin: 'super admin',
+      super_admin: 'super admin',
+      darkstore: 'dark store manager',
+      warehouse: 'warehouse manager',
+      rider: 'rider manager',
+      finance: 'finance admin',
+      merch: 'catalog manager',
+      support: 'customer support',
+    };
+    const userAsConsole = dashboardToConsole[userRoleLower.replace(/\s+/g, '_')] || userNormalized;
+
+    const roleMatches =
+      userNormalized === requestedRoleLower ||
+      userAsConsole === requestedRoleLower ||
+      (userIsAdmin && requestedIsConsoleRole);
     if (!roleMatches) return null;
   }
 

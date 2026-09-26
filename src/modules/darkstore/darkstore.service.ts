@@ -345,10 +345,72 @@ export async function getProductLocation(sku: string, storeId: string) {
 
 export async function getAuditLog(storeId: string, page = 1, limit = 50) {
   const sid = resolveStoreId(storeId);
-  const [logs, total] = await Promise.all([
-    AuditLog.find({ store_id: sid }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+  const skip = (page - 1) * limit;
+
+  // Live HSD App writes product/bag/rack scan events to hhd_scanned_items — not darkstore AuditLog.
+  const { HHDScannedItem, HHDUser } = await import('../hhd/hhd.models');
+
+  const [dsLogs, dsTotal, hhdRows, hhdTotal] = await Promise.all([
+    AuditLog.find({ store_id: sid }).sort({ createdAt: -1 }).limit(limit * 2).lean(),
     AuditLog.countDocuments({ store_id: sid }),
+    HHDScannedItem.find({})
+      .sort({ scannedAt: -1 })
+      .limit(Math.min(500, limit * 5))
+      .lean(),
+    HHDScannedItem.countDocuments({}),
   ]);
+
+  const userIds = [
+    ...new Set(hhdRows.map((r) => (r.userId ? String(r.userId) : '')).filter(Boolean)),
+  ];
+  const users = userIds.length
+    ? await HHDUser.find({ _id: { $in: userIds } })
+        .select('name mobile deviceId')
+        .lean()
+    : [];
+  const userMap = new Map(users.map((u) => [String(u._id), u]));
+
+  const hhdMapped = hhdRows.map((r) => {
+    const meta = (r.metadata || {}) as Record<string, unknown>;
+    const verdict = String(meta.verdict || 'OK');
+    const entityType = String(meta.entityType || (String(r.barcodeType || '').includes('bag') ? 'Bag' : 'Product'));
+    const u = r.userId ? userMap.get(String(r.userId)) : null;
+    return {
+      _id: String(r._id),
+      id: String(r._id),
+      store_id: sid,
+      barcode: r.barcodeData,
+      code: r.barcodeData,
+      entityType,
+      reference: r.orderId || entityType,
+      refId: r.orderId || null,
+      orderId: r.orderId || null,
+      order: r.orderId || null,
+      picker: u?.name || (r.userId ? String(r.userId) : 'HSD'),
+      user: u?.name || (r.userId ? String(r.userId) : 'HSD'),
+      device: r.deviceId || u?.deviceId || 'HHD',
+      deviceId: r.deviceId || u?.deviceId || null,
+      status: verdict === 'reject' ? 'failed' : verdict === 'duplicate' ? 'warning' : 'OK',
+      result: verdict,
+      createdAt: r.scannedAt || (r as { createdAt?: Date }).createdAt || new Date(),
+      source: 'hhd_scanned_items',
+    };
+  });
+
+  const dsMapped = (dsLogs as Array<Record<string, unknown>>).map((e) => ({
+    ...e,
+    source: 'darkstore_audit',
+    createdAt: (e.createdAt as Date | string | undefined) ?? new Date(0),
+  }));
+
+  const merged = [...hhdMapped, ...dsMapped].sort((a, b) => {
+    const ta = new Date(a.createdAt as Date).getTime();
+    const tb = new Date(b.createdAt as Date).getTime();
+    return tb - ta;
+  });
+
+  const total = hhdTotal + dsTotal;
+  const logs = merged.slice(skip, skip + limit);
   return { logs, total, page, limit };
 }
 
@@ -700,11 +762,39 @@ export async function registerHSDDevice(data: Record<string, unknown>, storeId: 
 }
 
 export async function assignHSDDevice(deviceId: string, userId: string) {
-  return DarkstoreDevice.findOneAndUpdate({ device_id: deviceId }, { status: 'assigned', assigned_to: userId }, { new: true }).lean();
+  const device = (await DarkstoreDevice.findOne({ device_id: deviceId }).lean()) as Record<string, any> | null;
+  if (device && device.status === 'assigned' && device.assigned_to && String(device.assigned_to) !== String(userId)) {
+    throw Object.assign(new Error('Device is already assigned to another user'), { statusCode: 409, code: 'DEVICE_ALREADY_ASSIGNED' });
+  }
+  const updated = (await DarkstoreDevice.findOneAndUpdate(
+    { device_id: deviceId },
+    { status: 'assigned', assigned_to: userId },
+    { new: true },
+  ).lean()) as Record<string, any> | null;
+  await DeviceHistory.create({
+    device_id: deviceId,
+    action: 'assign',
+    actor: userId,
+    note: `Assigned to ${userId}`,
+    store_id: updated?.store_id,
+  });
+  return updated;
 }
 
 export async function unassignHSDDevice(deviceId: string) {
-  return DarkstoreDevice.findOneAndUpdate({ device_id: deviceId }, { status: 'available', assigned_to: null }, { new: true }).lean();
+  const updated = (await DarkstoreDevice.findOneAndUpdate(
+    { device_id: deviceId },
+    { status: 'available', assigned_to: null },
+    { new: true },
+  ).lean()) as Record<string, any> | null;
+  await DeviceHistory.create({
+    device_id: deviceId,
+    action: 'unassign',
+    actor: 'system',
+    note: 'Device released',
+    store_id: updated?.store_id,
+  });
+  return updated;
 }
 
 export async function getDeviceHistory(deviceId: string) {

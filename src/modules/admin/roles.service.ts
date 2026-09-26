@@ -15,12 +15,93 @@ async function invalidateRolesCache(): Promise<void> {
 
 function formatRole(role: Record<string, any>, userCount: number) {
   const { _id, ...rest } = role;
-  return { ...rest, id: String(_id), userCount };
+  const accessScope = rest.accessScope || 'global';
+  const scopeLabel =
+    accessScope === 'store'
+      ? 'Assigned store'
+      : accessScope === 'zone'
+        ? 'Zone limited'
+        : 'Global';
+  return {
+    ...rest,
+    id: String(_id),
+    userCount,
+    accessScope,
+    scope: rest.scope || scopeLabel,
+  };
 }
 
 export async function getRoles(filter: repo.RoleFilter) {
+  await ensureCanonicalRoles();
   const roles = await repo.findRoles(filter);
   return Promise.all(roles.map(async (r) => formatRole(r, await repo.countActiveUsersForRole(String(r._id)))));
+}
+
+/** Idempotent bootstrap of the designed console roles (esp. Dark Store Manager). */
+async function ensureCanonicalRoles(): Promise<void> {
+  const presets: Array<{
+    name: string;
+    description: string;
+    accessScope: 'global' | 'zone' | 'store';
+    permissions: string[];
+    roleType: 'system' | 'custom';
+  }> = [
+    {
+      name: 'Dark Store Manager',
+      description: 'Manages a single assigned dark store — orders, picking, inventory and picker ops for that store only.',
+      accessScope: 'store',
+      roleType: 'system',
+      permissions: [
+        'inventory.*',
+        'orders.*',
+        'catalog.products.read',
+        'catalog.categories.read',
+        'delivery.track.read',
+        'analytics.reports.read',
+        'operations.*',
+      ],
+    },
+    {
+      name: 'Warehouse Manager',
+      description: 'Manages central warehouse receiving, putaway and transfers.',
+      accessScope: 'store',
+      roleType: 'system',
+      permissions: [
+        'warehouse.*',
+        'inventory.stock.read',
+        'inventory.stock.write',
+        'analytics.reports.read',
+      ],
+    },
+    {
+      name: 'Operations Admin',
+      description: 'Cross-store operations admin with global access.',
+      accessScope: 'global',
+      roleType: 'system',
+      permissions: ['*'],
+    },
+  ];
+
+  for (const preset of presets) {
+    const existing = await repo.findRoleByName(preset.name);
+    if (existing) continue;
+    try {
+      await repo.createRole({
+        name: preset.name,
+        description: preset.description,
+        roleType: preset.roleType,
+        permissions: preset.permissions,
+        accessScope: preset.accessScope,
+        isActive: true,
+        isTemplate: false,
+        isSystemTemplate: false,
+        templateVersion: 1,
+        riskLevel: 'medium',
+      });
+    } catch {
+      // Concurrent create or unique index race — ignore.
+    }
+  }
 }
 
 export async function getRoleById(id: string) {

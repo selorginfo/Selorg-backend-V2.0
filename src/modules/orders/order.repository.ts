@@ -40,16 +40,11 @@ export function countAll() {
 }
 
 /**
- * Allocate a unique customer order number for today.
+ * Allocate a unique customer order number for today (`ORD-YYYYMMDD-#####`).
  *
- * Previous implementation used `countDocuments()+1`, which collides whenever
- * documents are deleted or concurrent checkouts share the same count
- * (E11000 on unique index `orderNumber_1` → "orderNumber already exists").
- *
- * Strategy:
- * 1. Atomic per-day counter (upsert + $inc)
- * 2. Jump counter ahead of the highest existing ORD-YYYYMMDD-* sequence
- * 3. Final exists() guard + entropy fallback for races
+ * `countDocuments()+1` and a shared `$set` to `max+1` both hand the same number
+ * to concurrent checkouts (E11000 → "orderNumber already exists"). Each call
+ * takes one atomic counter step: `seq = max(seq, highestExisting) + 1`.
  */
 const OrderNumberCounterSchema = new mongoose.Schema(
   {
@@ -67,54 +62,78 @@ function dayStamp(d = new Date()): string {
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
+function mongoDuplicateCode(err: unknown): boolean {
+  const code = (err as { code?: number | string })?.code;
+  return code === 11000 || code === '11000' || code === 'E11000';
+}
+
+/** Highest numeric suffix already stored for this day. String sort is wrong when widths differ. */
 async function maxExistingSeqForDay(dayPrefix: string): Promise<number> {
   const escaped = dayPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const latest = await Order.findOne({ orderNumber: { $regex: `^${escaped}` } })
-    .sort({ orderNumber: -1 })
-    .select('orderNumber')
-    .lean();
-  if (!latest?.orderNumber) return 0;
-  const m = String(latest.orderNumber).match(/(\d+)$/);
-  return m ? Number(m[1]) : 0;
+  const rows = await Order.aggregate<{ maxSeq?: number }>([
+    { $match: { orderNumber: { $regex: `^${escaped}\\d+$` } } },
+    {
+      $project: {
+        seq: {
+          $convert: {
+            input: { $arrayElemAt: [{ $split: ['$orderNumber', '-'] }, -1] },
+            to: 'long',
+            onError: 0,
+            onNull: 0,
+          },
+        },
+      },
+    },
+    { $group: { _id: null, maxSeq: { $max: '$seq' } } },
+  ]);
+  return Number(rows[0]?.maxSeq || 0);
+}
+
+async function allocateSeq(counterId: string, floor: number): Promise<number> {
+  const update = [
+    {
+      $set: {
+        seq: {
+          $add: [{ $max: [{ $ifNull: ['$seq', 0] }, floor] }, 1],
+        },
+      },
+    },
+  ];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const doc = await OrderNumberCounter.findOneAndUpdate({ _id: counterId }, update, {
+        upsert: true,
+        new: true,
+      });
+      if (doc?.seq) return doc.seq;
+    } catch (err) {
+      if (!mongoDuplicateCode(err) || attempt === 2) throw err;
+    }
+  }
+  throw new Error('Could not allocate an order number');
 }
 
 export async function generateOrderNumber(): Promise<string> {
   const date = dayStamp();
   const dayPrefix = `ORD-${date}-`;
   const counterId = `ord-${date}`;
+  let floor = await maxExistingSeqForDay(dayPrefix);
 
-  const maxExisting = await maxExistingSeqForDay(dayPrefix);
-
-  let doc = await OrderNumberCounter.findByIdAndUpdate(
-    counterId,
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-
-  if (!doc) {
-    doc = await OrderNumberCounter.create({ _id: counterId, seq: Math.max(1, maxExisting + 1) });
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const seq = await allocateSeq(counterId, floor);
+    const candidate = `${dayPrefix}${String(seq).padStart(5, '0')}`;
+    const taken = await Order.exists({ orderNumber: candidate });
+    if (!taken) return candidate;
+    floor = Math.max(floor, seq);
   }
 
-  if (doc.seq <= maxExisting) {
-    doc = await OrderNumberCounter.findByIdAndUpdate(
-      counterId,
-      { $set: { seq: maxExisting + 1 } },
-      { new: true },
-    );
-  }
-
-  let candidate = `${dayPrefix}${String(doc?.seq || maxExisting + 1).padStart(5, '0')}`;
-
-  // Rare race: another writer inserted the same sequence between counter bump and create.
   for (let attempt = 0; attempt < 5; attempt++) {
-    const exists = await Order.exists({ orderNumber: candidate });
-    if (!exists) return candidate;
-    doc = await OrderNumberCounter.findByIdAndUpdate(counterId, { $inc: { seq: 1 } }, { new: true });
-    candidate = `${dayPrefix}${String(doc?.seq || Date.now() % 100000).padStart(5, '0')}`;
+    const candidate = `${dayPrefix}${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`.toUpperCase();
+    const taken = await Order.exists({ orderNumber: candidate });
+    if (!taken) return candidate;
   }
 
-  // Entropy fallback — still unique-index safe.
-  return `${dayPrefix}${Date.now().toString().slice(-8)}${Math.floor(Math.random() * 90 + 10)}`;
+  throw new Error('Could not allocate a unique order number');
 }
 
 export function create(payload: Record<string, unknown>[], session: mongoose.ClientSession) {

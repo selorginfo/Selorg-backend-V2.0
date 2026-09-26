@@ -2,6 +2,13 @@ import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../utils/AppError';
 import { DarkStore } from './dark-store.model';
 import { getPublishedValue } from '../../services/platformConfig.service';
+import {
+  assertAnyStoreAccess,
+  assertStoreAccess,
+  darkStoreListFilter,
+  isGlobalAdmin,
+  isStoreScopedUser,
+} from '../../utils/store-scope';
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
@@ -106,16 +113,21 @@ export async function getStoreInventory(req: Request, res: Response, next: NextF
 
 /**
  * Admin merch: list stores
+ * Dark Store Managers only receive their assigned store(s).
  */
-export async function listStoresAdmin(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listStoresAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const data = await DarkStore.find().sort({ createdAt: -1 }).lean();
+    const scope = darkStoreListFilter(req.user);
+    const data = await DarkStore.find(scope || {}).sort({ createdAt: -1 }).lean();
     res.status(200).json({ success: true, data });
   } catch (error) { next(error); }
 }
 
 export async function createStoreAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (isStoreScopedUser(req.user) && !isGlobalAdmin(req.user)) {
+      throw AppError.forbidden('Dark Store Managers cannot create dark stores.', 'STORE_SCOPE_DENIED');
+    }
     const item = await DarkStore.create(req.body);
     res.status(201).json({ success: true, data: item });
   } catch (error) { next(error); }
@@ -123,6 +135,10 @@ export async function createStoreAdmin(req: Request, res: Response, next: NextFu
 
 export async function updateStoreAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const existing = await DarkStore.findById(req.params.id).lean();
+    if (!existing) { res.status(404).json({ success: false, message: 'Store not found' }); return; }
+    // Assignment may be by Mongo id or store code — accept either.
+    assertAnyStoreAccess(req.user, String(existing._id), String(existing.code || ''));
     const body = { ...req.body };
     delete body._id;
     const item = await DarkStore.findByIdAndUpdate(req.params.id, { $set: body }, { new: true }).lean();
@@ -133,6 +149,9 @@ export async function updateStoreAdmin(req: Request, res: Response, next: NextFu
 
 export async function deleteStoreAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (isStoreScopedUser(req.user) && !isGlobalAdmin(req.user)) {
+      throw AppError.forbidden('Dark Store Managers cannot delete dark stores.', 'STORE_SCOPE_DENIED');
+    }
     await DarkStore.findByIdAndDelete(req.params.id);
     res.status(200).json({ success: true, message: 'Store deleted' });
   } catch (error) { next(error); }
@@ -145,6 +164,7 @@ export async function updateStoreInventoryAdmin(req: Request, res: Response, nex
   try {
     const { StoreInventory } = await import('../products/store-inventory.model');
     const { storeId } = req.params;
+    assertStoreAccess(req.user, storeId);
     const { productId, quantity, isAvailable } = req.body as { productId: string; quantity: number; isAvailable?: boolean };
     const item = await StoreInventory.findOneAndUpdate(
       { storeId, productId },
@@ -157,6 +177,7 @@ export async function updateStoreInventoryAdmin(req: Request, res: Response, nex
 
 export async function syncStoreInventoryAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    assertStoreAccess(req.user, req.params.storeId);
     res.status(200).json({ success: true, message: 'Inventory sync queued', storeId: req.params.storeId });
   } catch (error) { next(error); }
 }
@@ -165,6 +186,7 @@ export async function getStoreInventoryHistoryAdmin(req: Request, res: Response,
   try {
     const { StoreInventory } = await import('../products/store-inventory.model');
     const { storeId } = req.params;
+    assertStoreAccess(req.user, storeId);
     const items = await StoreInventory.find({ storeId }).sort({ updatedAt: -1 }).limit(200).lean();
     res.status(200).json({ success: true, data: items });
   } catch (error) { next(error); }
@@ -172,6 +194,7 @@ export async function getStoreInventoryHistoryAdmin(req: Request, res: Response,
 
 export async function triggerStoreReplenishmentAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    assertStoreAccess(req.user, req.params.storeId);
     res.status(200).json({ success: true, message: 'Replenishment triggered', storeId: req.params.storeId });
   } catch (error) { next(error); }
 }

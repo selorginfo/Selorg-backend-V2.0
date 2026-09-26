@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { Collection } from './collections.model';
 import { Product } from '../products/products.model';
 import { Category } from '../categories/categories.model';
+import { attachLiveSellableStock } from '../products/products.stock';
 
 const PRODUCT_SELECT = {
   name: 1, images: 1, imageUrl: 1, thumbnailUrl: 1, cardImageUrl: 1,
@@ -94,7 +95,9 @@ export async function resolveCollectionProducts(
   const total = products.length;
   const start = (page - 1) * limit;
   const pageProducts = await attachSubcategoryNames(products.slice(start, start + limit));
-  return { products: pageProducts, total };
+  // Home carousels and collection pages must use the same live store qty as category listings.
+  const withStock = await attachLiveSellableStock(pageProducts);
+  return { products: withStock, total };
 }
 
 export async function getCollectionBySlug(slug: string, options: { page?: number; limit?: number; sort?: string } = {}) {

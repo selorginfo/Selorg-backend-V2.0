@@ -464,8 +464,28 @@ export async function getPerformance(req: Request, res: Response, next: NextFunc
 
 export async function adminListPickers(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status, search, warehouseKey, page, limit } = req.query as Record<string, string>;
-    const result = await pickerService.listPickers({ status, search, warehouseKey, page: parseInt(page) || 1, limit: parseInt(limit) || 50 });
+    const { status, search, warehouseKey, page, limit, includeHsd, purpose } = req.query as Record<string, string>;
+    const includeHsdFlag =
+      includeHsd === '1' ||
+      includeHsd === 'true' ||
+      includeHsd === 'yes';
+    // /approvals → pending applicants; /pickers → approved directory only.
+    const pathHint = `${req.baseUrl || ''}${req.path || ''}${req.originalUrl || ''}`.toLowerCase();
+    const resolvedPurpose =
+      purpose === 'approvals' || purpose === 'directory' || purpose === 'all'
+        ? purpose
+        : pathHint.includes('/approvals')
+          ? 'approvals'
+          : 'directory';
+    const result = await pickerService.listPickers({
+      status,
+      search,
+      warehouseKey,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+      includeHsd: includeHsdFlag,
+      purpose: resolvedPurpose,
+    });
     res.json(ResponseFormatter.success(result));
   } catch (err) { next(err); }
 }
@@ -481,8 +501,13 @@ export async function adminApprovePicker(req: Request, res: Response, next: Next
 
 export async function adminRejectPicker(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { reason } = req.body;
-    const picker = await pickerService.rejectPicker(req.params.pickerId, reason || 'Rejected by admin');
+    const { reason, note } = req.body as { reason?: string; note?: string };
+    const rejectionReason = String(reason || note || '').trim();
+    if (!rejectionReason) {
+      res.status(400).json(ResponseFormatter.error('A rejection reason is required', 400));
+      return;
+    }
+    const picker = await pickerService.rejectPicker(req.params.pickerId, rejectionReason, req.user?.userId || 'system');
     if (!picker) { res.status(404).json(ResponseFormatter.error('Picker not found', 404)); return; }
     res.json(ResponseFormatter.success(picker));
   } catch (err) { next(err); }
@@ -501,7 +526,18 @@ export async function adminDecidePickerApproval(req: Request, res: Response, nex
       return;
     }
     if (decision === 'reject' || decision === 'rejected' || decision === 'deny') {
-      const picker = await pickerService.rejectPicker(pickerId, note || 'Rejected by admin');
+      if (!note) {
+        res.status(400).json(ResponseFormatter.error('A rejection reason is required so the applicant can fix and resubmit', 400));
+        return;
+      }
+      const picker = await pickerService.rejectPicker(pickerId, note, req.user?.userId || 'system');
+      if (!picker) { res.status(404).json(ResponseFormatter.error('Picker not found', 404)); return; }
+      res.json(ResponseFormatter.success(picker));
+      return;
+    }
+    if (decision === 'start_review' || decision === 'request_information' || decision === 'documents_required') {
+      // Keep applicant in interview / pending — no status flip.
+      const picker = await pickerService.getPickerById(pickerId);
       if (!picker) { res.status(404).json(ResponseFormatter.error('Picker not found', 404)); return; }
       res.json(ResponseFormatter.success(picker));
       return;
@@ -560,12 +596,43 @@ export async function adminUnassignDevice(req: Request, res: Response, next: Nex
 
 export async function adminReviewDocument(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status, rejectionReason } = req.body;
+    const body = req.body as { status?: string; rejectionReason?: string; reason?: string; documentId?: string; note?: string };
+    const status = String(body.status || '').toLowerCase();
+    const rejectionReason = String(body.rejectionReason || body.reason || body.note || '').trim();
+    const documentId = String(
+      req.params.documentId || body.documentId || '',
+    ).trim();
     const reviewedBy = req.user?.userId || 'system';
-    if (!['approved', 'rejected'].includes(status)) { res.status(400).json(ResponseFormatter.error('status must be approved or rejected', 400)); return; }
-    const doc = await pickerService.reviewDocument(req.params.documentId, status, reviewedBy, rejectionReason);
+    if (!documentId) {
+      res.status(400).json(ResponseFormatter.error('documentId is required', 400));
+      return;
+    }
+    if (!['approved', 'rejected'].includes(status)) {
+      res.status(400).json(ResponseFormatter.error('status must be approved or rejected', 400));
+      return;
+    }
+    if (status === 'rejected' && !rejectionReason) {
+      res.status(400).json(ResponseFormatter.error('A rejection reason is required for document rejection', 400));
+      return;
+    }
+    const doc = await pickerService.reviewDocument(
+      documentId,
+      status as 'approved' | 'rejected',
+      reviewedBy,
+      rejectionReason || undefined,
+    );
     if (!doc) { res.status(404).json(ResponseFormatter.error('Document not found', 404)); return; }
     res.json(ResponseFormatter.success(doc));
+  } catch (err) { next(err); }
+}
+
+export async function adminListPickerDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pickerId = req.params.id || req.params.pickerId;
+    const picker = await pickerService.getPickerById(pickerId);
+    if (!picker) { res.status(404).json(ResponseFormatter.error('Picker not found', 404)); return; }
+    const documents = await pickerService.listDocumentsForAdmin(String((picker as { id?: string }).id || pickerId));
+    res.json(ResponseFormatter.success({ pickerId: String((picker as { id?: string }).id || pickerId), documents }));
   } catch (err) { next(err); }
 }
 
@@ -1521,26 +1588,50 @@ export async function adminActivateAgency(req: Request, res: Response, next: Nex
 }
 
 export async function adminListStoreShiftSlots(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(ResponseFormatter.success({ storeId: req.params.storeId, slots: [] })); } catch (err) { next(err); }
+  try {
+    const { listStoreShiftSlots } = await import('../rider/pickerOps.bridge');
+    res.json(ResponseFormatter.success(await listStoreShiftSlots(req.params.storeId)));
+  } catch (err) { next(err); }
 }
 
 export async function adminCreateStoreShiftSlot(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.status(201).json(ResponseFormatter.success({ storeId: req.params.storeId, ...req.body })); } catch (err) { next(err); }
+  try {
+    const { createStoreShiftSlot } = await import('../rider/pickerOps.bridge');
+    const slot = await createStoreShiftSlot(req.params.storeId, req.body || {});
+    res.status(201).json(ResponseFormatter.success(slot));
+  } catch (err) { next(err); }
 }
 
 export async function adminListOtRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(ResponseFormatter.success({ requests: [], total: 0 })); } catch (err) { next(err); }
+  try {
+    const { status, page, limit } = req.query as Record<string, string>;
+    const result = await pickerService.listOtRequestsFromAttendance({
+      status,
+      page: parseInt(page) || 1,
+      limit: parseInt(limit) || 50,
+    });
+    res.json(ResponseFormatter.success(result));
+  } catch (err) { next(err); }
 }
 
 export async function adminDecideOtRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const decidedBy = req.user?.userId || 'system';
-    res.json(ResponseFormatter.success({ requestId: req.params.requestId, decision: req.body.decision, decidedBy }));
+    const result = await pickerService.decideOtRequest(
+      req.params.requestId,
+      req.body.decision,
+      decidedBy,
+      req.body.reason || req.body.note || req.body.rejectionReason,
+    );
+    res.json(ResponseFormatter.success(result));
   } catch (err) { next(err); }
 }
 
 export async function adminListShiftChangeRequests(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(ResponseFormatter.success({ requests: [], total: 0 })); } catch (err) { next(err); }
+  try {
+    const { listRosterFromPickerAssignments } = await import('../rider/pickerOps.bridge');
+    res.json(ResponseFormatter.success(await listRosterFromPickerAssignments()));
+  } catch (err) { next(err); }
 }
 
 export async function adminDecideShiftChangeRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -1551,5 +1642,39 @@ export async function adminDecideShiftChangeRequest(req: Request, res: Response,
 }
 
 export async function adminReassignPickerShift(req: Request, res: Response, next: NextFunction): Promise<void> {
-  try { res.json(ResponseFormatter.success({ shiftId: req.params.shiftId, reassigned: true })); } catch (err) { next(err); }
+  try {
+    const { reassignPickerShift } = await import('../rider/pickerOps.bridge');
+    const result = await reassignPickerShift(req.params.shiftId, req.body || {});
+    res.json(ResponseFormatter.success(result));
+  } catch (err) { next(err); }
+}
+
+export async function adminGetPickerMonthlySalary(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const pickerIdRaw = String(
+      (req.query as { pickerId?: string }).pickerId ||
+      (req.query as { id?: string }).id ||
+      '',
+    ).trim();
+    const month = (req.query as { month?: string }).month;
+    if (!pickerIdRaw) {
+      res.status(400).json(ResponseFormatter.error('pickerId is required', 400));
+      return;
+    }
+    const pickerId = await pickerService.resolvePickerIdForAdmin(pickerIdRaw);
+    if (!pickerId) {
+      res.status(404).json(ResponseFormatter.error('Picker not found', 404));
+      return;
+    }
+    const summary = await appService.getMonthlySalarySummary(pickerId, month);
+    res.json(ResponseFormatter.success({ ...summary, pickerId }));
+  } catch (err) { next(err); }
+}
+
+export async function adminListPickerPayroll(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const month = (req.query as { month?: string }).month;
+    const result = await pickerService.listPickerPayroll(month);
+    res.json(ResponseFormatter.success(result));
+  } catch (err) { next(err); }
 }

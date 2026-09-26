@@ -61,17 +61,54 @@ export async function createShift(payload: Record<string, unknown>) {
   const { startTime, endTime } = payload as { startTime: string; endTime: string };
   const startMins = parseTimeToMinutes(startTime);
   const endMins = parseTimeToMinutes(endTime);
-  if (startMins == null || endMins == null || endMins <= startMins) throw Object.assign(new Error('Invalid shift time window'), { code: 'INVALID_TIME_WINDOW' });
-  const id = (payload.id as string) || (await generateShiftId());
-  const shift = new RiderShift({ ...payload, id, durationMinutes: endMins - startMins });
-  return shift.save();
+  if (startMins == null || endMins == null || endMins <= startMins) {
+    throw Object.assign(new Error('Invalid shift time window'), { code: 'INVALID_TIME_WINDOW' });
+  }
+  // Write into Rider App catalogue so Admin + Rider App share the same slots.
+  const { PickerShift } = await import('../picker/picker.models');
+  const { mapPickerShiftToAdmin } = await import('./pickerOps.bridge');
+  const created = await PickerShift.create({
+    name: (payload.name as string) || (payload.title as string) || `Shift ${startTime}-${endTime}`,
+    warehouseKey: (payload.hubId as string) || (payload.hubName as string) || (payload.scope as string) || undefined,
+    startTime,
+    endTime,
+    time: `${startTime} – ${endTime}`,
+    capacity: Number(payload.capacity) || Number(payload.headcountTarget) || 1,
+    breakDuration: Number(payload.breakMinutes) || Number(payload.breakDuration) || 0,
+    status: 'SCHEDULED',
+    basePay: Number(payload.basePay) || 0,
+    hasIncentive: true,
+    isSurge: !!(payload.isPeak || payload.isSurge),
+  });
+  return mapPickerShiftToAdmin(created.toObject() as any, 0);
 }
 
 export async function getShiftById(id: string) {
+  const { PickerShift } = await import('../picker/picker.models');
+  const { mapPickerShiftToAdmin } = await import('./pickerOps.bridge');
+  if (id && id.length === 24) {
+    const picker = (await PickerShift.findById(id).lean()) as { _id: unknown } | null;
+    if (picker) {
+      const booked = await (await import('../picker/picker.models')).PickerShiftAssignment.countDocuments({
+        shiftId: picker._id,
+        status: { $in: ['ASSIGNED', 'STARTED', 'COMPLETED'] },
+      });
+      return mapPickerShiftToAdmin(picker as any, booked);
+    }
+  }
   return RiderShift.findOne({ id });
 }
 
 export async function listShifts(filters: Record<string, unknown> = {}, options: { page?: number; limit?: number } = {}) {
+  // Prefer Rider App catalogue (picker_shifts) so Admin Shift Templates / roster aren't empty.
+  try {
+    const { listShiftsFromPickers } = await import('./pickerOps.bridge');
+    const bridged = await listShiftsFromPickers(filters, options);
+    if (bridged.total > 0) return bridged;
+  } catch {
+    /* fall through to legacy rider_shifts */
+  }
+
   const query: Record<string, unknown> = {};
   const { dateFrom, dateTo, date, hubId, hubName, status, isPeak, search, availability, sortBy, sortOrder } = filters as Record<string, unknown>;
 
@@ -116,6 +153,15 @@ export async function listShifts(filters: Record<string, unknown> = {}, options:
 }
 
 export async function getShiftFilterOptions() {
+  const { PickerShift } = await import('../picker/picker.models');
+  const pickerHubs = await PickerShift.aggregate([
+    { $match: { warehouseKey: { $exists: true, $nin: [null, ''] } } },
+    { $group: { _id: '$warehouseKey' } },
+    { $sort: { _id: 1 } },
+  ]);
+  if (pickerHubs.length > 0) {
+    return { hubs: pickerHubs.map((r) => ({ hubName: r._id, hubId: r._id })) };
+  }
   const hubs = await RiderShift.aggregate([
     { $match: { $or: [{ hubName: { $exists: true, $nin: [null, ''] } }, { hubId: { $exists: true, $nin: [null, ''] } }] } },
     { $group: { _id: { hubName: '$hubName', hubId: '$hubId' } } },
@@ -125,6 +171,30 @@ export async function getShiftFilterOptions() {
 }
 
 export async function updateShift(id: string, updates: Record<string, unknown>) {
+  const { PickerShift } = await import('../picker/picker.models');
+  const { mapPickerShiftToAdmin } = await import('./pickerOps.bridge');
+  if (id && id.length === 24) {
+    const patch: Record<string, unknown> = {};
+    if (updates.name != null) patch.name = updates.name;
+    if (updates.startTime != null) patch.startTime = updates.startTime;
+    if (updates.endTime != null) patch.endTime = updates.endTime;
+    if (updates.capacity != null) patch.capacity = Number(updates.capacity);
+    if (updates.headcountTarget != null) patch.capacity = Number(updates.headcountTarget);
+    if (updates.hubId != null || updates.hubName != null) {
+      patch.warehouseKey = updates.hubId || updates.hubName;
+    }
+    if (updates.status != null) {
+      const s = String(updates.status).toLowerCase();
+      patch.status = s.includes('cancel') ? 'CANCELLED' : s.includes('draft') ? 'SCHEDULED' : 'SCHEDULED';
+    }
+    if (updates.startTime || updates.endTime) {
+      const st = String(updates.startTime || '');
+      const et = String(updates.endTime || '');
+      if (st && et) patch.time = `${st} – ${et}`;
+    }
+    const updated = await PickerShift.findByIdAndUpdate(id, patch, { new: true }).lean();
+    if (updated) return mapPickerShiftToAdmin(updated as any, 0);
+  }
   const shift = await RiderShift.findOne({ id });
   if (!shift) return null;
   if (updates.startTime || updates.endTime) {
@@ -138,6 +208,12 @@ export async function updateShift(id: string, updates: Record<string, unknown>) 
 }
 
 export async function deleteShift(id: string) {
+  const { PickerShift } = await import('../picker/picker.models');
+  const { mapPickerShiftToAdmin } = await import('./pickerOps.bridge');
+  if (id && id.length === 24) {
+    const updated = await PickerShift.findByIdAndUpdate(id, { status: 'CANCELLED' }, { new: true }).lean();
+    if (updated) return mapPickerShiftToAdmin(updated as any, 0);
+  }
   const shift = await RiderShift.findOne({ id });
   if (!shift) return null;
   shift.status = 'cancelled';

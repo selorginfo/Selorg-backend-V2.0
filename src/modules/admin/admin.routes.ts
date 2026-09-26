@@ -28,6 +28,7 @@ import notificationCampaignRoutes from './notification-campaign.routes';
 import analyticsRoutes from './analytics.routes';
 import deliveryStallsRoutes from '../delivery-stalls/ops.routes';
 import deliveryAdminRoutes from '../delivery/delivery-admin.routes';
+import opsFlowRoutes from './ops-flow.routes';
 import { sessionsRouter, accessLogsRouter, auditLogsRouter } from './activity-logs.routes';
 import {
   adminLoginSchema,
@@ -104,8 +105,32 @@ permissionsRouter.delete('/:id', requirePermission(PERMISSIONS.ADMIN_ROLES_WRITE
 const router = Router();
 router.use('/auth', authRouter);
 
+/** Console roles that may enter the admin API; fine-grained gates use requirePermission. */
+const DASHBOARD_CONSOLE_ROLES = [
+  'admin',
+  'super_admin',
+  'darkstore',
+  'dark_store_manager',
+  'store_manager',
+  'warehouse',
+  'warehouse_manager',
+  'finance',
+  'finance_admin',
+  'rider',
+  'rider_manager',
+  'vendor',
+  'production',
+  'merch',
+  'operations_admin',
+  'operations',
+  'customer_support',
+  'catalog_manager',
+  'catalog',
+  'support',
+] as const;
+
 const protectedRouter = Router();
-protectedRouter.use(authenticateAdmin, requireRole('admin', 'super_admin'));
+protectedRouter.use(authenticateAdmin, requireRole(...DASHBOARD_CONSOLE_ROLES));
 protectedRouter.use('/users', usersRouter);
 protectedRouter.use('/roles', rolesRouter);
 protectedRouter.use('/permissions', permissionsRouter);
@@ -133,6 +158,7 @@ protectedRouter.use('/', deliveryStallsRoutes);
 const riderMasterDataRouter = Router();
 riderMasterDataRouter.get('/', riderCtrl.listRiders);
 riderMasterDataRouter.get('/:id', riderCtrl.getRiderById);
+riderMasterDataRouter.get('/:id/documents', riderCtrl.listRiderDocuments);
 riderMasterDataRouter.patch('/:id/status', riderCtrl.updateRiderStatus);
 protectedRouter.use('/riders', riderMasterDataRouter);
 
@@ -201,6 +227,7 @@ const pickerApprovalsAlias = Router();
 pickerApprovalsAlias.get('/', pickerCtrl.adminListPickers);
 pickerApprovalsAlias.get('/:id', pickerCtrl.adminGetPickerById);
 pickerApprovalsAlias.patch('/:id', pickerCtrl.adminUpdatePickerStatus);
+pickerApprovalsAlias.get('/:id/documents', pickerCtrl.adminListPickerDocuments);
 pickerApprovalsAlias.get('/:id/action-logs', pickerCtrl.adminGetPickerActionLogs);
 pickerApprovalsAlias.get('/:id/training-progress', pickerCtrl.adminGetPickerTrainingProgress);
 pickerApprovalsAlias.get('/:id/face-verification', pickerCtrl.adminGetFaceVerification);
@@ -328,6 +355,8 @@ applicationsRouter.patch('/:id', async (req, res, next) => {
   try { res.json({ success: true, data: { id: req.params.id, ...req.body } }); } catch (err) { next(err); }
 });
 protectedRouter.use('/applications', applicationsRouter);
+
+protectedRouter.use('/ops', opsFlowRoutes);
 
 router.use(protectedRouter);
 

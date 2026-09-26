@@ -17,6 +17,11 @@ export async function getProfile(req: Request, res: Response, next: NextFunction
       req.query?.sync === '1' || req.query?.sync === 'true' || (req.query?.sync as unknown) === true;
     const userId = req.hhdUser?.id;
 
+    if (userId) {
+      const { ensureHhdOperatorHub } = await import('./hhdOperator.bridge');
+      await ensureHhdOperatorHub(userId);
+    }
+
     const user = await HHDUser.findById(userId).select('-password');
     if (!user) {
       return next(new AppError('User not found', 404, 'NOT_FOUND'));

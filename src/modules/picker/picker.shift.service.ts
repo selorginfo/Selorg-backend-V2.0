@@ -7,7 +7,7 @@ import { pickerConfig } from './picker.config';
 import {
   timeRangeDisplay, rupees, hubDateKey, hubDayStart, hubDayEnd, parseHubDate, haversineKm, hasCoords,
 } from './picker.format';
-import { getCashInHand } from './picker.cash.service';
+import { assertCodTransferredForOnline, getCashInHand } from './picker.cash.service';
 
 /**
  * Shift booking and online presence (APIs 18–23).
@@ -378,6 +378,9 @@ export async function startShift(
     throw AppError.conflict('Another shift is already active. End it before starting a new one.', 'ANOTHER_SHIFT_ACTIVE');
   }
 
+  // Overnight float must be transferred before starting the next day's shift.
+  await assertCodTransferredForOnline(pickerId);
+
   const assignment = await PickerShiftAssignment.findOne({
     userId, shiftId: new mongoose.Types.ObjectId(shiftId), status: 'ASSIGNED',
   }).populate('shiftId');
@@ -495,7 +498,7 @@ export async function endShift(
   const cashInHand = await getCashInHand(pickerId);
   if (cashInHand > pickerConfig.codOfflineCarryLimit) {
     throw new AppError(
-      `Deposit your collected cash (${rupees(cashInHand)}) before ending the shift.`,
+      `Transfer your COD cash (${rupees(cashInHand)}) to the company before ending the shift.`,
       409,
       'UNDEPOSITED_CASH',
       { cashInHand, allowedCarry: pickerConfig.codOfflineCarryLimit },
@@ -597,6 +600,9 @@ export async function goOnline(
     };
   }
 
+  // Undeposited COD from a prior shift blocks going online until transferred.
+  await assertCodTransferredForOnline(pickerId);
+
   // Shiftless go-online is presence for dispatch across the service area.
   // Hub geofence applies to booked shift start (`startShift`), not this toggle.
   // GPS is optional — recorded when present, never required to go online.
@@ -615,6 +621,14 @@ export async function goOnline(
   );
 
   const active = await getActiveAssignment(pickerId);
+  try {
+    const cacheService = (await import('../../utils/cache')).default;
+    await cacheService.del('rider:dashboard:counts:picker');
+    await cacheService.del('rider:summary:picker');
+    await cacheService.delPattern('riders:*');
+  } catch {
+    /* cache optional */
+  }
   return {
     isOnline: true,
     onlineSince: onlineSince.toISOString(),
@@ -673,7 +687,7 @@ export async function goOffline(
   const cashInHand = await getCashInHand(pickerId);
   if (cashInHand > pickerConfig.codOfflineCarryLimit) {
     throw new AppError(
-      `Deposit your collected cash (${rupees(cashInHand)}) before going offline.`,
+      `Transfer your COD cash (${rupees(cashInHand)}) to the company before going offline.`,
       409,
       'UNDEPOSITED_CASH',
       { cashInHand, allowedCarry: pickerConfig.codOfflineCarryLimit },

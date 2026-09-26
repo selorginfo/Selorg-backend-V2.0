@@ -202,22 +202,34 @@ export async function getFinanceVendors(hubKey?: string) {
 // ─── Picker Withdrawals ───────────────────────────────────────────────────────
 
 export async function listPickerWithdrawals(filters: Record<string, string> = {}) {
-  const query: any = {};
-  if (filters.status) query.status = filters.status;
-  const page = parseInt(filters.page) || 1;
-  const limit = parseInt(filters.limit) || 50;
-  const [items, total] = await Promise.all([
-    RefundRequest.find({ ...query, reason: 'withdrawal' }).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
-    RefundRequest.countDocuments({ ...query, reason: 'withdrawal' }),
-  ]);
-  return { items, total, page, limit };
+  const { listPickerWithdrawalsFixed } = await import('../rider/pickerOps.bridge');
+  return listPickerWithdrawalsFixed(filters);
 }
 
 export async function getPickerWithdrawalById(id: string) {
+  if (mongoose.isValidObjectId(id)) {
+    const row = await PickerWithdrawalRequest.findById(id).populate('userId', 'name phone email').lean();
+    if (row) return row;
+  }
   return RefundRequest.findById(id).lean();
 }
 
 export async function updatePickerWithdrawal(id: string, update: Record<string, unknown>) {
+  if (mongoose.isValidObjectId(id)) {
+    const statusRaw = update.status ?? update.action ?? update.decision;
+    const patch: Record<string, unknown> = { ...update };
+    if (statusRaw != null) {
+      const s = String(statusRaw).toUpperCase();
+      if (s.includes('APPROV')) patch.status = 'APPROVED';
+      else if (s.includes('REJECT')) patch.status = 'REJECTED';
+      else if (s.includes('PAID') || s.includes('SETTLE')) patch.status = 'PAID';
+      else patch.status = s;
+    }
+    delete patch.action;
+    delete patch.decision;
+    const updated = await PickerWithdrawalRequest.findByIdAndUpdate(id, patch, { new: true }).lean();
+    if (updated) return updated;
+  }
   return RefundRequest.findByIdAndUpdate(id, update, { new: true }).lean();
 }
 
@@ -328,11 +340,13 @@ export async function markRefundCompleted(id: string) {
 // ─── Rider Cash ───────────────────────────────────────────────────────────────
 
 export async function getRiderCashSummary() {
-  return { totalCollected: 0, totalDeposited: 0, pendingDeposit: 0, riders: 0 };
+  const { getRiderCashSummaryFromPickers } = await import('../rider/pickerOps.bridge');
+  return getRiderCashSummaryFromPickers();
 }
 
 export async function getRiderPayouts(filters: Record<string, string> = {}) {
-  return { items: [], total: 0, page: 1, limit: 50 };
+  const { listRiderPayoutsFromPickers } = await import('../rider/pickerOps.bridge');
+  return listRiderPayoutsFromPickers(filters);
 }
 
 export async function getCodReconciliation() {
@@ -346,7 +360,12 @@ export async function getRiderPaymentDetails(riderId: string) {
 // ─── Reconciliation ───────────────────────────────────────────────────────────
 
 export async function getAvailableGateways() {
-  return [{ id: 'razorpay', name: 'Razorpay', status: 'active' }, { id: 'cashfree', name: 'Cashfree', status: 'active' }];
+  const worldlineConfigured = Boolean(process.env.WORLDLINE_MERCHANT_ID || process.env.WORLDLINE_SALT);
+  return [
+    { id: 'worldline', name: 'Worldline', status: worldlineConfigured ? 'active' : 'inactive' },
+    { id: 'razorpay', name: 'Razorpay', status: 'inactive' },
+    { id: 'cashfree', name: 'Cashfree', status: 'inactive' },
+  ];
 }
 
 export async function getReconSummary(entityId?: string) {

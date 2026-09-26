@@ -515,6 +515,8 @@ export async function assignBulkRider(id: string, riderId: string, by: string): 
   const order = await findBulk(id);
   if (order.status === 'cancelled' || order.status === 'delivered') throw AppError.conflict(`${id} is ${order.status}`, 'RECORD_CLOSED');
   const rider = await findStaff(riderId, 'rider');
+  const { assertRiderFreeForNewOrder } = await import('../picker/rider-lock');
+  await assertRiderFreeForNewOrder(String(rider._id), String(order._id));
   const stage = order.adminFulfillment?.stage ?? 0;
   const previous = order.riderId;
   order.riderId = String(rider._id);

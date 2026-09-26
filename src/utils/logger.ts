@@ -84,12 +84,13 @@ class Logger {
   }
 
   logRequest(req: Request, res: Response, duration?: number) {
+    const r = req as Request & { id?: string; user?: { userId?: string } };
     winstonLogger.info('HTTP Request', {
-      requestId: req.id,
+      requestId: r.id,
       method: req.method,
       path: req.path,
       statusCode: res.statusCode,
-      userId: req.user?.userId,
+      userId: r.user?.userId,
       ...(duration !== undefined && { duration }),
     });
   }

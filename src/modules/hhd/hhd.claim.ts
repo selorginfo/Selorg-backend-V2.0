@@ -69,13 +69,41 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
     throw new AppError('Order id is required', 400, 'VALIDATION_ERROR');
   }
 
-  const operatorHub = await resolveOperatorHub(userId);
+  const { ensureHhdOperatorHub } = await import('./hhdOperator.bridge');
+  const operatorHub = await ensureHhdOperatorHub(userId);
   const existing = await HHDOrder.findOne({ orderId });
   if (!existing) {
     throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
   }
 
   await fulfillment.assertCustomerOrderPickable(orderId);
+
+  const hhdUser = await HHDUser.findById(userId).select('name isActive deviceId').lean();
+  if (!hhdUser || (hhdUser as { isActive?: boolean }).isActive === false) {
+    throw new AppError('HSD operator is not active', 403, 'OPERATOR_INACTIVE');
+  }
+  const hhdUserName = String(hhdUser?.name || '').trim() || 'HSD Operator';
+  let hsdDeviceId = String((hhdUser as { deviceId?: string }).deviceId || '').trim() || null;
+
+  // Require a device only when this operator has none AND the hub still has free devices to collect.
+  const { PickerDevice } = await import('../picker/picker.models');
+  const held = await PickerDevice.findOne({
+    assignedTo: new mongoose.Types.ObjectId(userId),
+    status: 'assigned',
+  })
+    .select('deviceId')
+    .lean();
+  if (held?.deviceId) hsdDeviceId = String(held.deviceId);
+  if (!hsdDeviceId) {
+    const available = await PickerDevice.countDocuments({ status: 'available' }).catch(() => 0);
+    if (available > 0) {
+      throw new AppError(
+        'Collect and verify an HSD device before accepting orders.',
+        403,
+        'HSD_DEVICE_REQUIRED',
+      );
+    }
+  }
 
   const owner = existing.userId ? String(existing.userId) : null;
   if (owner === userId) {
@@ -84,7 +112,11 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
       if (!existing.assignedAt) existing.assignedAt = new Date();
       await existing.save();
     }
-    await fulfillment.markCustomerPicking(orderId);
+    await fulfillment.markCustomerPicking(orderId, {
+      hhdUserId: userId,
+      hhdUserName,
+      hsdDeviceId: hsdDeviceId || undefined,
+    });
     return existing;
   }
   if (owner) {
@@ -122,6 +154,10 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
     throw new AppError('Another operator has already accepted this order.', 409, 'ORDER_ALREADY_ASSIGNED');
   }
 
-  await fulfillment.markCustomerPicking(orderId);
+  await fulfillment.markCustomerPicking(orderId, {
+    hhdUserId: userId,
+    hhdUserName,
+    hsdDeviceId: hsdDeviceId || undefined,
+  });
   return claimed;
 }

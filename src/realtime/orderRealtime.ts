@@ -279,6 +279,39 @@ export const orderRealtime = {
   notifyCustomer(userId: string | null | undefined, event: string, payload: OrderEventPayload): void {
     emitToCustomer(userId, event, payload);
   },
+  /**
+   * Inbox row just committed. Customer/web clients listening on their user room
+   * update the bell and list without a reload.
+   */
+  publishInboxNotification(
+    userId: string | null | undefined,
+    doc: {
+      _id?: unknown;
+      title?: string;
+      body?: string;
+      read?: boolean;
+      category?: string;
+      data?: Record<string, unknown>;
+      createdAt?: Date | string;
+      deliveryStatus?: string;
+    },
+  ): void {
+    if (!customerIo || !userId || !doc?._id) return;
+    const createdAt =
+      doc.createdAt instanceof Date
+        ? doc.createdAt.toISOString()
+        : doc.createdAt || new Date().toISOString();
+    customerIo.to(customerRoom(String(userId))).emit('notification:created', {
+      id: String(doc._id),
+      title: doc.title || '',
+      body: doc.body || '',
+      read: Boolean(doc.read),
+      category: doc.category || 'system',
+      data: doc.data || {},
+      createdAt,
+      deliveryStatus: doc.deliveryStatus,
+    });
+  },
   /** Live rider GPS for the customer tracking map. Includes coordinates (status events do not). */
   emitRiderGps(input: {
     orderId: string;

@@ -493,7 +493,28 @@ export async function postHeartbeat(pickerId: string, batteryLevel?: number) {
     { _id: pickerId },
     { $set: { lastSeenAt: now, ...(batteryLevel != null ? { batteryLevel } : {}) } },
   );
+  // Opportunistically mark other riders offline when their heartbeat is stale.
+  void markStaleRidersOffline().catch(() => undefined);
   return { ok: true, ts: now.toISOString() };
+}
+
+/** Riders with no heartbeat for this many ms are treated as offline (default 90s). */
+const STALE_ONLINE_MS = Number(process.env.RIDER_STALE_ONLINE_MS || 90_000);
+
+export async function markStaleRidersOffline(): Promise<{ markedOffline: number }> {
+  const cutoff = new Date(Date.now() - STALE_ONLINE_MS);
+  const result = await PickerUser.updateMany(
+    {
+      isOnline: true,
+      $or: [
+        { lastSeenAt: { $lt: cutoff } },
+        { lastSeenAt: null },
+        { lastSeenAt: { $exists: false } },
+      ],
+    },
+    { $set: { isOnline: false, onlineSince: null } },
+  );
+  return { markedOffline: result.modifiedCount || 0 };
 }
 
 export async function postPresencePing(pickerId: string) {

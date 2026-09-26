@@ -9,6 +9,8 @@ import { logger } from '../../utils/logger';
 import { calculatePricing } from '../../services/pricing.service';
 import { computeDeliveryFee, getDeliveryPricingConfig } from '../../services/deliveryPricing.service';
 import { findNearestDarkstore, resolveDarkStoreIdByCode } from '../store/store.repository';
+import { deriveFulfillmentStage, adminLabelForStage } from '../orders/order-lifecycle';
+import { assertAnyStoreAccess, orderStoreScopeFilter } from '../../utils/store-scope';
 
 
 export async function listAdminOrders(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -26,6 +28,9 @@ export async function listAdminOrders(req: Request, res: Response, next: NextFun
         $lte: new Date(`${day}T23:59:59.999+05:30`),
       };
     }
+    const scope = orderStoreScopeFilter(req.user);
+    if (scope) Object.assign(filter, scope);
+
     const [orders, total] = await Promise.all([
       Order.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
       Order.countDocuments(filter),
@@ -42,10 +47,13 @@ export async function listAdminOrders(req: Request, res: Response, next: NextFun
 
     const enriched = orders.map((o) => {
       const u = userMap.get(String(o.userId)) as { name?: string; phoneNumber?: string; savedCheckoutContact?: { fullName?: string; phone?: string } } | undefined;
+      const stage = deriveFulfillmentStage(o);
       return {
         ...o,
-        customer_name: u?.name || u?.savedCheckoutContact?.fullName || '',
-        customer_phone: u?.phoneNumber || u?.savedCheckoutContact?.phone || '',
+        customer_name: u?.name || u?.savedCheckoutContact?.fullName || o.customerName || '',
+        customer_phone: u?.phoneNumber || u?.savedCheckoutContact?.phone || o.customerPhone || '',
+        fulfillmentStage: stage,
+        fulfillmentLabel: adminLabelForStage(stage),
       };
     });
 
@@ -65,13 +73,22 @@ export async function getAdminOrder(req: Request, res: Response, next: NextFunct
       res.status(404).json({ success: false, error: 'Order not found' });
       return;
     }
+    const hub =
+      (order as { offerHubKey?: string }).offerHubKey ||
+      (order as { hubKey?: string }).hubKey ||
+      '';
+    const storeId = (order as { storeId?: unknown }).storeId;
+    assertAnyStoreAccess(req.user, hub ? String(hub) : undefined, storeId ? String(storeId) : undefined);
     const user = order.userId
       ? await CustomerUser.findById(order.userId).select('name phoneNumber savedCheckoutContact').lean() as { name?: string; phoneNumber?: string; savedCheckoutContact?: { fullName?: string; phone?: string } } | null
       : null;
+    const stage = deriveFulfillmentStage(order);
     const enriched = {
       ...order,
       customer_name: user?.name || user?.savedCheckoutContact?.fullName || '',
       customer_phone: user?.phoneNumber || user?.savedCheckoutContact?.phone || '',
+      fulfillmentStage: stage,
+      fulfillmentLabel: adminLabelForStage(stage),
     };
     res.status(200).json({ success: true, data: enriched });
   } catch (err) {

@@ -155,6 +155,16 @@ export async function registerPickScan(
   if (scannedQty >= qty) {
     await writeAuditRow(userId, input, { verdict: 'duplicate', itemId: String(match._id) });
     await bumpAccuracy(userId, 'rescans');
+    // Heal Admin itemStatus if an earlier scan succeeded before write-through existed.
+    try {
+      const fulfillment = await import('../orders/fulfillment.service');
+      await fulfillment.syncCustomerItemPicked(orderId, String(match.itemCode || barcodeData), {
+        scannedQuantity: scannedQty,
+        quantity: qty,
+      });
+    } catch {
+      /* non-fatal */
+    }
     return {
       verdict: 'duplicate',
       message: 'This unit is already in the bag.',
@@ -185,8 +195,20 @@ export async function registerPickScan(
     verdict: 'success',
     itemId: String(match._id),
     scannedQuantity: match.scannedQuantity,
+    entityType: 'Product',
   });
   await bumpAccuracy(userId, 'successfulUnits');
+
+  // Write-through: Admin order detail reads customer_orders.items.itemStatus
+  try {
+    const fulfillment = await import('../orders/fulfillment.service');
+    await fulfillment.syncCustomerItemPicked(orderId, String(match.itemCode || barcodeData), {
+      scannedQuantity: Number(match.scannedQuantity ?? 0),
+      quantity: Number(match.quantity ?? 1),
+    });
+  } catch {
+    /* non-fatal — HSD scan still succeeded */
+  }
 
   return {
     verdict: 'success',

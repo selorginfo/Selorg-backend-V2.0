@@ -446,6 +446,11 @@ export interface IPickerAttendance extends Document {
   ordersCompleted?: number;
   regularHours?: number;
   overtimeHours?: number;
+  /** Admin OT approval: pending | approved | rejected */
+  otApprovalStatus?: 'pending' | 'approved' | 'rejected';
+  otApprovedBy?: string;
+  otApprovedAt?: Date;
+  otRejectionReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -475,6 +480,10 @@ const PickerAttendanceSchema = new Schema<IPickerAttendance>(
     ordersCompleted: { type: Number },
     regularHours: { type: Number },
     overtimeHours: { type: Number },
+    otApprovalStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    otApprovedBy: { type: String },
+    otApprovedAt: { type: Date },
+    otRejectionReason: { type: String },
   },
   { timestamps: true, collection: 'picker_attendance' },
 );
@@ -522,6 +531,10 @@ const PickerTransactionSchema = new Schema<IPickerTransaction>(
   { timestamps: true, collection: 'picker_transactions' },
 );
 PickerTransactionSchema.index({ userId: 1, createdAt: -1 });
+PickerTransactionSchema.index(
+  { userId: 1, type: 1, referenceId: 1 },
+  { unique: true, partialFilterExpression: { referenceId: { $type: 'string' } } },
+);
 
 export const PickerTransaction = mongoose.models.PickerTransaction || mongoose.model<IPickerTransaction>('PickerTransaction', PickerTransactionSchema);
 

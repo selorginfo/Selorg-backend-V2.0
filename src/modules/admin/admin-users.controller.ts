@@ -89,8 +89,8 @@ export async function deleteUser(req: Request, res: Response, next: NextFunction
 
 export async function assignRole(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { roleId } = req.body as AssignRoleInput;
-    const data = await usersService.assignRole(req.params.id, roleId);
+    const { roleId, assignedStores, primaryStoreId } = req.body as AssignRoleInput;
+    const data = await usersService.assignRole(req.params.id, roleId, { assignedStores, primaryStoreId });
     res.json(ResponseFormatter.success(data));
   } catch (err) {
     next(err);

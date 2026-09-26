@@ -11,8 +11,8 @@ import { logger } from '../../utils/logger';
 import * as authRepo from './auth.repository';
 import { ICustomerUser, IOtpSession } from './auth.model';
 
-/** Customer sessions last 24 hours. Override with JWT_ACCESS_EXPIRES_SECONDS if product changes this. */
-const ACCESS_EXPIRES_SECONDS = Number(process.env.JWT_ACCESS_EXPIRES_SECONDS) || 60 * 60 * 24;
+/** Absolute customer access-token lifetime: 7 days from issue. There is no customer refresh-token store; logout revokes this JWT. Override with JWT_ACCESS_EXPIRES_SECONDS. */
+const ACCESS_EXPIRES_SECONDS = Number(process.env.JWT_ACCESS_EXPIRES_SECONDS) || 7 * 24 * 60 * 60;
 
 /**
  * Verifies `otp` against `session`, tracking attempts and locking the session out (burning it,

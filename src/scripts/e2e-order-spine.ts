@@ -253,6 +253,7 @@ async function main() {
     ids.orders.push(String(o4._id));
     ids.numbers.push(o4.orderNumber);
     await fulfillment.runPostOrderIntegrations(String(o4.userId), { id: String(o4._id) });
+    await claimHhdOrder(String(hhdA._id), o4.orderNumber);
     await fulfillment.completeHandover({
       hhdOrderId: o4.orderNumber,
       scannedBy: String(hhdA._id),
@@ -300,9 +301,10 @@ async function main() {
     ids.orders.push(String(c3._id));
     ids.numbers.push(c3.orderNumber);
     await fulfillment.runPostOrderIntegrations(String(c3.userId), { id: String(c3._id) });
+    await claimHhdOrder(String(hhdA._id), c3.orderNumber);
     await fulfillment.completeHandover({
       hhdOrderId: c3.orderNumber,
-      scannedBy: String(scannerId),
+      scannedBy: String(hhdA._id),
     });
     await Order.updateOne({ _id: c3._id }, { $set: { status: 'cancelled' } });
     await fulfillment.onCustomerOrderCancelled((await Order.findById(c3._id))!);

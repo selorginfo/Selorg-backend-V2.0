@@ -308,11 +308,16 @@ export async function verifyOTPHandler(
 
     if (!user) {
       // Auto-create picker on first successful OTP (existing behaviour for phone).
+      const { DEFAULT_HUB_KEY } = await import('../orders/fulfillment.service');
       user = await HHDUser.create(
         channel === 'sms'
-          ? { mobile: identifier, isActive: true }
-          : { email: identifier, isActive: true },
+          ? { mobile: identifier, isActive: true, darkstore: DEFAULT_HUB_KEY, warehouse: DEFAULT_HUB_KEY }
+          : { email: identifier, isActive: true, darkstore: DEFAULT_HUB_KEY, warehouse: DEFAULT_HUB_KEY },
       );
+    } else if (!(user.darkstore || user.warehouse)) {
+      const { ensureHhdOperatorHub } = await import('./hhdOperator.bridge');
+      await ensureHhdOperatorHub(String(user._id));
+      user = (await HHDUser.findById(user._id)) || user;
     }
 
     if (user.isActive === false) {

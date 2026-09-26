@@ -112,6 +112,9 @@ export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 export const assignRoleSchema = z.object({
   roleId: z.string().trim().min(1, 'roleId is required'),
+  /** Required when the target role has accessScope=store (e.g. Dark Store Manager). */
+  assignedStores: z.array(z.string()).optional(),
+  primaryStoreId: z.string().optional(),
 });
 export type AssignRoleInput = z.infer<typeof assignRoleSchema>;
 

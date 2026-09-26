@@ -121,22 +121,95 @@ function scoreRider(rider: Record<string, unknown>, order: Record<string, unknow
 export async function listUnassignedOrders(filters: { priority?: string; zone?: string; search?: string; sortBy?: string; sortOrder?: string; page?: number; limit?: number } = {}) {
   const { priority = 'all', zone, search, sortBy = 'priority', sortOrder = 'asc', page = 1, limit = 50 } = filters;
 
+  // Primary source: customer_orders offered to Rider App (picker shared-orders pool).
+  const { Order: CustomerOrder } = await import('../orders/order.model');
+  const customerQuery: Record<string, unknown> = {
+    riderStage: 'offered',
+    $or: [{ pickerId: null }, { pickerId: { $exists: false } }],
+    status: { $in: ['confirmed', 'getting-packed', 'on-the-way'] },
+  };
+  if (zone) customerQuery.offerHubKey = zone;
+  if (search) {
+    const rx = new RegExp(String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    customerQuery.$and = [
+      { $or: [{ pickerId: null }, { pickerId: { $exists: false } }] },
+      { $or: [{ orderNumber: rx }, { 'deliveryAddress.contactName': rx }, { 'shippingAddress.contactName': rx }] },
+    ];
+    delete customerQuery.$or;
+  }
+
+  const customerRows = (await CustomerOrder.find(customerQuery).sort({ createdAt: -1 }).limit(200).lean()) as Record<string, unknown>[];
+  let orders = customerRows.map((raw) => {
+    const id = String(raw._id);
+    const drop =
+      (raw.deliveryAddress as { line1?: string; city?: string } | undefined)?.line1 ||
+      (raw.shippingAddress as { addressLine1?: string } | undefined)?.addressLine1 ||
+      '';
+    const hub = String(raw.offerHubKey || raw.storeId || 'DS-Adyar-01');
+    const priorityLevel = calculatePriority(raw.slaDeadline || raw.promisedDeliveryAt);
+    const distance = Number(raw.distanceKm) || calcOrderDistance({ id, pickupLocation: hub, dropLocation: drop });
+    return {
+      id,
+      orderNumber: raw.orderNumber,
+      status: raw.status,
+      riderStage: raw.riderStage,
+      customerName:
+        (raw.deliveryAddress as { contactName?: string } | undefined)?.contactName ||
+        (raw.shippingAddress as { contactName?: string } | undefined)?.contactName ||
+        'Customer',
+      pickupLocation: { address: hub, coordinates: extractCoordinates(hub) },
+      dropLocation: { address: drop, coordinates: extractDropCoordinates(raw) },
+      priority: priorityLevel,
+      distance,
+      etaMinutes: Math.ceil(distance * 3),
+      zone: hub,
+      riderId: null as string | null,
+      deliveryType: raw.deliveryType || 'standard',
+      bagCode: raw.bagCode || null,
+      dispatchBay: raw.dispatchBay || null,
+      slaDeadline: raw.slaDeadline || raw.promisedDeliveryAt || null,
+      source: 'customer_orders',
+    };
+  });
+
+  // Fallback: legacy warehouse orders collection (if any remain).
   const query: Record<string, unknown> = {
     status: { $in: ['pending', 'new', 'processing', 'ready', 'picking', 'picked', 'packed', 'ready_for_dispatch'] },
     $and: [{ $or: [{ riderId: null }, { riderId: { $exists: false } }, { riderId: '' }] }],
   };
   if (zone) query.zone = zone;
-  if (search) query.$or = [{ id: { $regex: search, $options: 'i' } }, { order_id: { $regex: search, $options: 'i' } }, { customerName: { $regex: search, $options: 'i' } }];
+  const warehouseRows = (await WarehouseOrderModel.find(query).lean()) as Record<string, unknown>[];
+  const legacyOrders = warehouseRows
+    .map((raw) => {
+      const order = normalizeOrder(raw);
+      const priorityLevel = calculatePriority(order.slaDeadline);
+      const distance = calcOrderDistance(order);
+      const pickup = extractCoordinates(order.pickupLocation);
+      const drop = extractDropCoordinates(raw);
+      const id = String((order as { id?: string }).id || '');
+      return {
+        id,
+        orderNumber: order.orderNumber ?? id,
+        status: order.status,
+        riderStage: order.riderStage ?? null,
+        customerName: String(order.customerName || 'Customer'),
+        pickupLocation: { address: String(order.pickupLocation || ''), coordinates: pickup },
+        dropLocation: { address: String(order.dropLocation || ''), coordinates: drop },
+        priority: priorityLevel,
+        distance,
+        etaMinutes: Math.ceil(distance * 3),
+        zone: String(order.zone || ''),
+        riderId: (order.riderId as string | null) ?? null,
+        deliveryType: order.deliveryType || 'standard',
+        bagCode: order.bagCode ?? null,
+        dispatchBay: order.dispatchBay ?? null,
+        slaDeadline: order.slaDeadline ?? null,
+        source: 'orders',
+      };
+    })
+    .filter((o) => o.id);
 
-  let orders = (await WarehouseOrderModel.find(query).lean()) as Record<string, unknown>[];
-  orders = orders.map((raw) => {
-    const order = normalizeOrder(raw);
-    const priorityLevel = calculatePriority(order.slaDeadline);
-    const distance = calcOrderDistance(order);
-    const pickup = extractCoordinates(order.pickupLocation);
-    const drop = extractDropCoordinates(raw);
-    return { ...order, id: (order as any).id, priority: priorityLevel, distance, etaMinutes: Math.ceil(distance * 3), pickupLocation: { address: order.pickupLocation, coordinates: pickup }, dropLocation: { address: order.dropLocation, coordinates: drop } };
-  }).filter((o: any) => o.id);
+  orders = [...orders, ...legacyOrders];
 
   if (priority !== 'all') orders = orders.filter((o) => o.priority === priority);
 
@@ -157,12 +230,12 @@ export async function listUnassignedOrders(filters: { priority?: string; zone?: 
 }
 
 export async function getUnassignedOrdersCount(priority = 'all') {
-  const orders = (await WarehouseOrderModel.find({ status: 'pending' }).lean()) as Record<string, unknown>[];
-  const withPriority = orders.map((o) => ({ ...o, priority: calculatePriority(o.slaDeadline) }));
+  const result = await listUnassignedOrders({ priority, page: 1, limit: 500 });
   const breakdown = { high: 0, medium: 0, low: 0 } as Record<string, number>;
-  withPriority.forEach((o) => { breakdown[o.priority as string] = (breakdown[o.priority as string] || 0) + 1; });
-  const filtered = priority === 'all' ? withPriority : withPriority.filter((o) => o.priority === priority);
-  return { count: filtered.length, priorityBreakdown: breakdown };
+  result.orders.forEach((o) => {
+    breakdown[o.priority as string] = (breakdown[o.priority as string] || 0) + 1;
+  });
+  return { count: result.total, priorityBreakdown: breakdown };
 }
 
 export async function getMapData(filters: { hubId?: string; showRiders?: boolean; showOrders?: boolean; showPickupPoints?: boolean } = {}) {
@@ -170,19 +243,38 @@ export async function getMapData(filters: { hubId?: string; showRiders?: boolean
   const result: Record<string, unknown> = { riders: [], orders: [], pickupPoints: [], statusCounts: { riders: {}, orders: {} } };
 
   if (showRiders) {
-    const riders = (await Rider.find({}).lean()) as any[];
-    result.riders = riders.filter((r) => isValidCoord(r.location?.lat, r.location?.lng)).map((r) => ({ id: r.id, name: r.name, status: r.status, location: r.location, zone: r.zone, capacity: r.capacity, currentOrderId: r.currentOrderId, avatarInitials: r.avatarInitials }));
-    const counts: Record<string, number> = {};
-    riders.forEach((r) => { counts[r.status as string] = (counts[r.status as string] || 0) + 1; });
-    result.statusCounts = { ...(result.statusCounts as object), riders: { online: counts.online || 0, busy: counts.busy || 0, idle: counts.idle || 0, offline: counts.offline || 0 } };
+    const map = await getMapRiders({});
+    result.riders = map.riders;
+    result.statusCounts = { ...(result.statusCounts as object), riders: map.statusCounts };
   }
 
   if (showOrders) {
-    const orders = (await WarehouseOrderModel.find({ status: { $nin: ['delivered', 'cancelled'] } }).lean()) as Record<string, unknown>[];
-    result.orders = orders.map((raw) => {
-      const o = normalizeOrder(raw);
-      return { id: o.id, status: o.status, pickupLocation: { address: o.pickupLocation, coordinates: extractCoordinates(o.pickupLocation) }, dropLocation: { address: o.dropLocation, coordinates: extractDropCoordinates(raw) }, riderId: o.riderId, priority: calculatePriority(o.slaDeadline), zone: o.zone };
-    }).filter((o) => o.id);
+    const { Order: CustomerOrder } = await import('../orders/order.model');
+    const liveOrders = (await CustomerOrder.find({
+      status: { $nin: ['delivered', 'cancelled'] },
+      $or: [{ riderStage: { $in: ['offered', 'accepted', 'picked_up'] } }, { riderStage: null }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean()) as Record<string, unknown>[];
+    result.orders = liveOrders.map((raw) => {
+      const id = String(raw._id);
+      const hub = String(raw.offerHubKey || 'DS-Adyar-01');
+      const drop =
+        (raw.deliveryAddress as { line1?: string } | undefined)?.line1 ||
+        (raw.shippingAddress as { addressLine1?: string } | undefined)?.addressLine1 ||
+        '';
+      return {
+        id,
+        orderNumber: raw.orderNumber,
+        status: raw.riderStage || raw.status,
+        pickupLocation: { address: hub, coordinates: extractCoordinates(hub) },
+        dropLocation: { address: drop, coordinates: extractDropCoordinates(raw) },
+        riderId: raw.pickerId ? String(raw.pickerId) : raw.riderId || null,
+        priority: calculatePriority(raw.slaDeadline),
+        zone: hub,
+      };
+    });
   }
 
   if (showPickupPoints) {
@@ -200,32 +292,29 @@ export async function getMapData(filters: { hubId?: string; showRiders?: boolean
 }
 
 export async function getMapRiders(filters: { status?: string; zone?: string } = {}) {
-  const query: Record<string, unknown> = {};
-  if (filters.status) query.status = filters.status;
-  if (filters.zone) query.zone = filters.zone;
-  const riders = (await Rider.find(query).lean()) as Record<string, unknown>[];
-  const counts: Record<string, number> = {};
-  riders.forEach((r) => { counts[r.status as string] = (counts[r.status as string] || 0) + 1; });
-  // Include riders without GPS so Admin never falls back to design seed when the fleet exists offline.
+  const { listPickerFleetUsers, mapPickerToLiveMapRider } = await import('./pickerFleet.bridge');
+  let riders = (await listPickerFleetUsers(500)).map(mapPickerToLiveMapRider);
+  if (filters.status) {
+    const s = filters.status.toLowerCase();
+    riders = riders.filter((r) => String(r.status).toLowerCase() === s);
+  }
+  if (filters.zone) {
+    const z = filters.zone.toLowerCase();
+    riders = riders.filter((r) => String(r.zone || r.hub || '').toLowerCase().includes(z));
+  }
+  const counts: Record<string, number> = { online: 0, busy: 0, idle: 0, offline: 0 };
+  riders.forEach((r) => {
+    const key = String(r.status || 'offline');
+    counts[key] = (counts[key] || 0) + 1;
+  });
   return {
-    riders: riders.map((r) => {
-      const loc = r.location as { lat?: number; lng?: number } | null;
-      const hasGps = isValidCoord(loc?.lat, loc?.lng);
-      return {
-        id: r.id || r._id,
-        name: r.name,
-        status: r.status,
-        location: hasGps ? loc : { lat: 12.9716, lng: 77.5946 },
-        zone: r.zone,
-        capacity: r.capacity,
-        hub: r.hub || r.darkStore || r.assignedStore,
-        currentOrder: r.currentOrderId || r.currentOrder || r.activeOrder,
-        vehicle: r.vehicle || r.vehicleType,
-        rating: r.rating,
-        gpsStale: !hasGps,
-      };
-    }),
-    statusCounts: { online: counts.online || 0, busy: counts.busy || 0, idle: counts.idle || 0, offline: counts.offline || 0 },
+    riders,
+    statusCounts: {
+      online: counts.online || 0,
+      busy: counts.busy || 0,
+      idle: counts.idle || 0,
+      offline: counts.offline || 0,
+    },
   };
 }
 
@@ -273,30 +362,128 @@ export async function getOrderAssignmentDetails(orderId: string) {
 }
 
 export async function assignOrder(orderId: string, riderId: string, overrideSla = false) {
-  const orderDoc = await WarehouseOrderModel.findOne({ id: orderId }) as Record<string, unknown> & { save: () => Promise<void>; timeline?: Array<unknown> };
-  if (!orderDoc) throw Object.assign(new Error('Order not found'), { statusCode: 404 });
+  void overrideSla;
+  const { Order: CustomerOrder } = await import('../orders/order.model');
+  const { findPickerFleetUser } = await import('./pickerFleet.bridge');
+  const { PickerUser } = await import('../picker/picker.models');
 
-  const assignable = ['pending', 'assigned', 'delayed', 'picked_up', 'in_transit', 'new', 'processing', 'ready', 'picking', 'picked', 'packed', 'ready_for_dispatch'];
-  if (!assignable.includes(String(orderDoc.status || '').toLowerCase())) throw Object.assign(new Error(`Order cannot be assigned in status: ${orderDoc.status}`), { statusCode: 400 });
+  const picker = await findPickerFleetUser(riderId);
+  if (!picker) {
+    // Legacy operational Rider collection fallback
+    const orderDoc = (await WarehouseOrderModel.findOne({ id: orderId })) as
+      | (Record<string, unknown> & { save: () => Promise<void>; timeline?: Array<unknown> })
+      | null;
+    if (!orderDoc) throw Object.assign(new Error('Order not found'), { statusCode: 404 });
+    const rider = await Rider.findOne({ id: riderId });
+    if (!rider) throw Object.assign(new Error('Rider not found'), { statusCode: 404 });
+    (orderDoc as Record<string, unknown>).status = 'assigned';
+    (orderDoc as Record<string, unknown>).riderId = riderId;
+    await orderDoc.save();
+    rider.status = 'busy';
+    rider.currentOrderId = orderId;
+    await rider.save();
+    return { orderId, riderId: rider.id, riderName: rider.name, status: 'assigned', etaMinutes: 15, assignedAt: new Date() };
+  }
 
-  const rider = await Rider.findOne({ id: riderId });
-  if (!rider) throw Object.assign(new Error('Rider not found'), { statusCode: 404 });
+  // Resolve customer order by ObjectId or orderNumber
+  let customer =
+    mongoose.Types.ObjectId.isValid(orderId) && String(orderId).length === 24
+      ? await CustomerOrder.findById(orderId)
+      : null;
+  if (!customer) customer = await CustomerOrder.findOne({ orderNumber: orderId });
+  if (!customer) throw Object.assign(new Error('Order not found'), { statusCode: 404 });
 
-  const cap = rider.capacity;
-  if (cap.currentLoad >= cap.maxLoad) throw Object.assign(new Error('Rider is at capacity'), { statusCode: 400 });
+  if (customer.status === 'cancelled' || customer.status === 'delivered') {
+    throw Object.assign(new Error(`Order cannot be assigned in status: ${customer.status}`), { statusCode: 400 });
+  }
 
-  (orderDoc as Record<string, unknown>).status = 'assigned';
-  (orderDoc as Record<string, unknown>).riderId = riderId;
-  (orderDoc as Record<string, unknown>).etaMinutes = 15;
-  if (!Array.isArray(orderDoc.timeline)) (orderDoc as Record<string, unknown>).timeline = [];
-  (orderDoc.timeline as Array<unknown>).push({ status: 'assigned', time: new Date(), note: `Manually assigned to ${rider.name}` });
+  if (!picker.isOnline) {
+    throw Object.assign(
+      new Error('Rider must be online in the Rider App before an order can be offered.'),
+      { statusCode: 409, code: 'RIDER_OFFLINE' },
+    );
+  }
 
-  rider.status = rider.status === 'offline' ? 'online' : 'busy';
-  rider.currentOrderId = orderId;
-  rider.capacity.currentLoad += 1;
+  const { deriveFulfillmentStage } = await import('../orders/order-lifecycle');
+  const { applyFulfillmentTransition } = await import('../orders/order-lifecycle.apply');
+  const { pickerConfig } = await import('../picker/picker.config');
+  const stage = deriveFulfillmentStage(customer);
+  const readyForRider =
+    (stage === 'packed_in_rack' || customer.riderStage === 'offered') &&
+    ['getting-packed', 'confirmed'].includes(String(customer.status));
+  if (!readyForRider) {
+    throw Object.assign(new Error('Order is not ready for a rider. Finish picking and rack handover first.'), { statusCode: 409 });
+  }
+  try {
+    const { assertRiderFreeForNewOrder } = await import('../picker/rider-lock');
+    await assertRiderFreeForNewOrder(String(picker._id), String(customer._id));
+  } catch (err) {
+    const busy = err as { message?: string; statusCode?: number };
+    throw Object.assign(new Error(busy.message || 'Rider is not available'), { statusCode: busy.statusCode || 409 });
+  }
 
-  await Promise.all([orderDoc.save(), rider.save()]);
-  return { orderId, riderId: rider.id, riderName: rider.name, status: 'assigned', etaMinutes: 15, assignedAt: new Date() };
+  const previousPickerId = customer.pickerId ? String(customer.pickerId) : null;
+  const now = new Date();
+  const offerExpiresAt = new Date(now.getTime() + pickerConfig.offerExpirySeconds * 1000);
+
+  // Admin/auto "assign" only OFFERS the order. Rider Accepted happens only on rider accept.
+  if (stage !== 'packed_in_rack') {
+    await applyFulfillmentTransition({
+      orderId: String(customer._id),
+      to: 'packed_in_rack',
+      actor: 'admin',
+      note: `Offered to rider ${picker.name || picker._id} — waiting for accept`,
+      set: {
+        pickerId: null,
+        riderId: null,
+        offerHubKey: customer.offerHubKey || picker.currentLocationId || 'DS-Adyar-01',
+        offerExpiresAt,
+        'adminFulfillment.riderName': picker.name || '',
+      },
+    });
+  } else {
+    await CustomerOrder.updateOne(
+      { _id: customer._id },
+      {
+        $set: {
+          pickerId: null,
+          riderId: null,
+          offerExpiresAt,
+          'adminFulfillment.riderName': picker.name || '',
+        },
+        $push: {
+          timeline: {
+            status: 'getting-packed',
+            timestamp: now,
+            note: `Admin offered order to ${picker.name || picker._id} — waiting for rider accept`,
+            actor: 'admin',
+          },
+        },
+      },
+    );
+  }
+
+  if (previousPickerId && previousPickerId !== String(picker._id)) {
+    await PickerUser.updateOne(
+      { _id: previousPickerId, activeOrderId: String(customer._id) },
+      { $unset: { activeOrderId: 1 } },
+    );
+  }
+  // Never force isOnline. Never set riderStage=accepted here.
+
+  return {
+    orderId: String(customer._id),
+    orderNumber: customer.orderNumber,
+    riderId: String(picker._id),
+    riderName: picker.name || '',
+    status: 'offered',
+    riderStage: 'offered',
+    fulfillmentStage: 'packed_in_rack',
+    etaMinutes: customer.etaMinutes || null,
+    assignedAt: null,
+    offeredAt: now,
+    message: 'Order offered. Status becomes Rider Accepted only after the rider accepts in the app.',
+  };
 }
 
 export async function batchAssignOrders(orderIds: string[] | null = null, options: { dryRun?: boolean } = {}) {
@@ -355,11 +542,82 @@ export async function batchAssignOrders(orderIds: string[] | null = null, option
   return { assigned: assignedCount, failed: failedCount, assignments, totalProcessed: unassigned.length };
 }
 
+function realPoint(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
+  if (typeof lat !== 'number' || typeof lng !== 'number' || Number.isNaN(lat) || Number.isNaN(lng) || (lat === 0 && lng === 0)) return null;
+  return { lat, lng };
+}
+
+/** Assigns ready customer orders to free online bike riders using real GPS. One order per rider. */
+export async function assignOfferedCustomerOrders() {
+  const { Order: CustomerOrder } = await import('../orders/order.model');
+  const { PickerUser } = await import('../picker/picker.models');
+  const { assertRiderFreeForNewOrder } = await import('../picker/rider-lock');
+  const offered = await CustomerOrder.find({
+    $or: [
+      { fulfillmentStage: 'packed_in_rack', pickerId: null },
+      {
+        riderStage: 'offered',
+        deliveryType: { $ne: 'bulk' },
+        status: { $in: ['getting-packed', 'confirmed'] },
+        $or: [{ pickerId: null }, { pickerId: { $exists: false } }],
+      },
+    ],
+  }).sort({ createdAt: 1 }).limit(30);
+
+  const riders = await PickerUser.find({
+    workforceRole: 'rider',
+    status: 'ACTIVE',
+    isOnline: true,
+    vehicleType: { $nin: ['auto', 'ev_auto', 'van'] },
+  }).select('_id gpsLocation currentLocationId');
+
+  let assigned = 0;
+  const used = new Set<string>();
+  for (const order of offered) {
+    const drop = realPoint(order.deliveryAddress?.latitude, order.deliveryAddress?.longitude);
+    let chosen: (typeof riders)[number] | null = null;
+    let bestKm = Number.POSITIVE_INFINITY;
+    for (const rider of riders) {
+      const id = String(rider._id);
+      if (used.has(id)) continue;
+      const gps = realPoint(rider.gpsLocation?.latitude, rider.gpsLocation?.longitude);
+      if (drop && gps) {
+        const km = calculateDistance(gps.lat, gps.lng, drop.lat, drop.lng);
+        if (km > 8 || km >= bestKm) continue;
+        bestKm = km;
+      } else if (drop) {
+        continue;
+      } else {
+        const hub = String(order.offerHubKey || '').toLowerCase();
+        const riderHub = String(rider.currentLocationId || '').toLowerCase();
+        if (hub && riderHub && hub !== riderHub) continue;
+      }
+      try {
+        await assertRiderFreeForNewOrder(id, String(order._id));
+      } catch {
+        continue;
+      }
+      chosen = rider;
+      if (!drop) break;
+    }
+    if (!chosen) continue;
+    try {
+      await assignOrder(String(order._id), String(chosen._id));
+      used.add(String(chosen._id));
+      assigned += 1;
+    } catch (err) {
+      logger.warn('[dispatch] offered customer order was not assigned', { orderId: String(order._id), error: (err as Error).message });
+    }
+  }
+  return { assigned, considered: offered.length };
+}
+
 export async function autoAssignOrders(orderIds: string[] | null = null) {
   const rule = await AutoAssignRule.findOne({}).sort({ createdAt: 1 }).lean() as { isActive?: boolean } | null;
   if (!rule?.isActive) return { assigned: 0, failed: 0, disabled: true, message: 'Auto-assign is disabled. Enable the rule in Auto-Assign Configuration.' };
+  const customer = await assignOfferedCustomerOrders();
   const result = await batchAssignOrders(orderIds);
-  return { ...result, disabled: false };
+  return { ...result, customerAssigned: customer.assigned, disabled: false };
 }
 
 export async function simulateAutoAssignOrders(orderIds: string[] | null = null) {

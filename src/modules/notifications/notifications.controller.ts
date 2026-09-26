@@ -9,6 +9,7 @@ import type {
   RegisterWebPushInput,
   RemoveTokenInput,
 } from './notifications.validation';
+import { orderRealtime } from '../../realtime/orderRealtime';
 
 function requireCustomerId(req: Request): string {
   if (!req.customer?._id) throw AppError.unauthorized();
@@ -195,6 +196,9 @@ export async function adminSend(req: Request, res: Response, next: NextFunction)
       read: false,
     }));
     const created = await Notification.insertMany(docs);
+    for (const doc of created) {
+      orderRealtime.publishInboxNotification(String(doc.userId), doc);
+    }
     res.status(201).json({ success: true, data: { count: created.length } });
   } catch (err) { next(err); }
 }

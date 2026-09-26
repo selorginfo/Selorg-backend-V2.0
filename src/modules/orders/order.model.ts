@@ -1,4 +1,10 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import {
+  FULFILLMENT_STAGES,
+  EXCEPTION_REASONS,
+  type FulfillmentStage,
+  type ExceptionReason,
+} from './order-lifecycle';
 
 /**
  * Schema-only port (faithful field-for-field), following the products/categories precedent:
@@ -19,6 +25,8 @@ export type OrderRiderStage = 'offered' | 'accepted' | 'picked_up' | 'delivered'
 
 export const ORDER_RIDER_STAGES: readonly OrderRiderStage[] = ['offered', 'accepted', 'picked_up', 'delivered', 'cancelled'];
 
+export type { FulfillmentStage, ExceptionReason };
+
 /** Reason ids sent by `CancelOrderSheet`. Stored enumerated so ops can report on them. */
 export const RIDER_CANCEL_REASONS = ['unreachable', 'refused', 'address', 'asked', 'vehicle', 'other'] as const;
 export type RiderCancelReason = (typeof RIDER_CANCEL_REASONS)[number];
@@ -36,12 +44,15 @@ const timelineEventSchema = new Schema(
       enum: [
         'pending', 'confirmed', 'getting-packed', 'on-the-way', 'arrived', 'delivered', 'cancelled',
         'accepted', 'picked_up', 'rider_cancelled', 'delivery_failed',
+        'picker_accepted', 'packed_in_rack', 'waiting_for_picker', 'waiting_for_rider',
+        'rider_accepted', 'rider_picked', 'exception',
       ],
       required: true,
     },
     timestamp: { type: Date, default: Date.now },
     note: { type: String, default: '' },
     actor: { type: String, default: '' },
+    userId: { type: String, default: '' },
   },
   { _id: false },
 );
@@ -71,6 +82,10 @@ export interface IOrder extends Document {
   orderNumber: string;
   items: Array<Record<string, unknown>>;
   status: OrderStatus;
+  /** Ops-canonical lifecycle. Customer `status` is derived for app compatibility. */
+  fulfillmentStage: FulfillmentStage;
+  exceptionReason?: ExceptionReason | null;
+  exceptionNote?: string;
   timeline: Array<Record<string, unknown>>;
   cancellationReason: string;
   addressId?: mongoose.Types.ObjectId;
@@ -129,6 +144,15 @@ export interface IOrder extends Document {
    * the ops dashboard; `pickerId` is the single indexed relation the rider app queries by.
    */
   pickerId?: mongoose.Types.ObjectId | null;
+  /** HSD/HHD operator (`hhd_users`) currently packing this order — distinct from rider `pickerId`. */
+  hhdUserId?: mongoose.Types.ObjectId | null;
+  /** HSD device / session / picker shift that packed this order. */
+  hsdDeviceId?: string | null;
+  hsdSessionId?: string | null;
+  pickerShiftId?: string | null;
+  pickerAcceptedAt?: Date | null;
+  bagScannedAt?: Date | null;
+  rackedAt?: Date | null;
   riderStage?: OrderRiderStage | null;
   offerHubKey?: string | null;
   offerExpiresAt?: Date | null;
@@ -186,6 +210,14 @@ const orderSchema = new Schema<IOrder>(
     orderNumber: { type: String, required: true, unique: true },
     items: [orderItemSchema],
     status: { type: String, enum: ['pending', 'confirmed', 'getting-packed', 'on-the-way', 'arrived', 'delivered', 'cancelled'], default: 'pending' },
+    fulfillmentStage: {
+      type: String,
+      enum: [...FULFILLMENT_STAGES],
+      default: 'pending',
+      index: true,
+    },
+    exceptionReason: { type: String, enum: [...EXCEPTION_REASONS, null], default: null },
+    exceptionNote: { type: String, default: '' },
     timeline: [timelineEventSchema],
     cancellationReason: { type: String, default: '' },
     addressId: { type: Schema.Types.ObjectId, ref: 'CustomerAddress' },
@@ -240,6 +272,13 @@ const orderSchema = new Schema<IOrder>(
     storeId: { type: Schema.Types.ObjectId, ref: 'Store' },
     riderId: { type: String, default: null, index: true },
     pickerId: { type: Schema.Types.ObjectId, ref: 'PickerUser', default: null, index: true },
+    hhdUserId: { type: Schema.Types.ObjectId, ref: 'HHDUser', default: null, index: true },
+    hsdDeviceId: { type: String, default: null, index: true },
+    hsdSessionId: { type: String, default: null },
+    pickerShiftId: { type: String, default: null },
+    pickerAcceptedAt: { type: Date, default: null },
+    bagScannedAt: { type: Date, default: null },
+    rackedAt: { type: Date, default: null },
     riderStage: { type: String, enum: [...ORDER_RIDER_STAGES, null], default: null, index: true },
     offerHubKey: { type: String, default: null },
     offerExpiresAt: { type: Date, default: null },
@@ -304,6 +343,8 @@ orderSchema.index({ pickerId: 1, riderStage: 1 });
 orderSchema.index({ pickerId: 1, deliveredAt: -1 });
 orderSchema.index({ offerHubKey: 1, riderStage: 1, status: 1 });
 orderSchema.index({ bagCode: 1 });
+orderSchema.index({ fulfillmentStage: 1, createdAt: -1 });
+orderSchema.index({ fulfillmentStage: 1, offerHubKey: 1 });
 
 export const Order =
   (mongoose.models.CustomerOrder as mongoose.Model<IOrder>) || mongoose.model<IOrder>('CustomerOrder', orderSchema, 'customer_orders');

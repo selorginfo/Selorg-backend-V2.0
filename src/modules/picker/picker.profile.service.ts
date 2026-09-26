@@ -794,15 +794,18 @@ export async function submitOnboarding(
   }
 
   // Mirrored onto the user so the admin review queue and the auth response can
-  // read consent without joining the application.
+  // read consent without joining the application. Resubmit after rejection returns
+  // the account to PENDING (interview) so the app stays gated off home.
   await PickerUser.updateOne(
     { _id: userId },
     {
       $set: {
+        status: 'PENDING',
         ...(input.acceptedTermsVersion ? { acceptedTermsVersion: input.acceptedTermsVersion } : {}),
         ...(input.acceptedPrivacyVersion ? { acceptedPrivacyVersion: input.acceptedPrivacyVersion } : {}),
         'onboarding.submittedForReviewAt': submittedAt,
       },
+      $unset: { rejectedReason: 1, rejectedAt: 1 },
     },
   );
 

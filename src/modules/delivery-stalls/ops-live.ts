@@ -901,13 +901,14 @@ export async function attributeOrderToStall(input: {
 
   if (!order && (input.seedIfMissing || input.orderNumber === '__seed__')) {
     const { CustomerUser } = await import('../auth/auth.model');
-    let user = await CustomerUser.findOne({}).select('_id').lean();
+    let user = await CustomerUser.findOne({}).select('_id').lean<{ _id: unknown }>();
     if (!user) {
       // Minimal placeholder user for attribution E2E when customer collection is empty
-      user = await CustomerUser.create({
+      const created = await CustomerUser.create({
         name: 'Stall E2E Customer',
         phoneNumber: `9${Date.now().toString().slice(-9)}`,
       });
+      user = { _id: created._id };
     }
     const num = `SEL-STALL-${Date.now().toString().slice(-8)}`;
     order = await Order.create({

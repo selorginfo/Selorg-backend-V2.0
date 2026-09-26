@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../../utils/AppError';
 import { ResponseFormatter } from '../../utils/response';
-import { HHDBag, HHDOrder, IHHDOrder } from './hhd.models';
+import { HHDBag, HHDOrder, HHDScannedItem, IHHDOrder } from './hhd.models';
 import { BAG_STATUS, ORDER_STATUS, BagStatus } from './hhd.constants';
 import { mapBagView, bagSizeLabel } from './hhd.mappers';
 import { assertOrderTransition } from './hhd.order-state';
@@ -169,6 +169,15 @@ export async function scanBag(req: Request, res: Response, next: NextFunction): 
         }
         order.bagId = parsed.bagId;
         await order.save();
+
+        await HHDScannedItem.create({
+          barcodeData: parsed.bagId,
+          barcodeType: 'qr',
+          orderId,
+          userId,
+          metadata: { verdict: 'success', entityType: 'Bag' },
+          scannedAt: new Date(),
+        }).catch(() => undefined);
 
         return {
           body: mapBagView(bag),

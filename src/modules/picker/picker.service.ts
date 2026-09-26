@@ -5,6 +5,7 @@ import {
   PickerNotification, PickerBankAccount, PickerWorkLocation, PickerTrainingVideo,
   PickerActionLog, deriveDeliveryMode,
 } from './picker.models';
+import { PickerOnboardingApplication } from './picker.rider.models';
 import { Order } from '../orders/order.model';
 import { storeRiderPosition, emitRiderLocation, emitOrderStatus } from '../../services/realtime.service';
 import { broadcastRiderGps } from '../orders/fulfillment.service';
@@ -29,7 +30,7 @@ export async function updateProfile(userId: string, updates: Record<string, unkn
   return PickerUser.findByIdAndUpdate(userId, safe, { new: true }).lean();
 }
 
-/** Credits a completed delivery onto the rider's payout wallet. */
+/** Credits a completed delivery onto the rider's payout wallet. One credit per order. */
 export async function creditEarnings(
   userId: string,
   amount: number,
@@ -38,19 +39,41 @@ export async function creditEarnings(
 ): Promise<void> {
   if (!amount || amount <= 0) return;
   const oid = new mongoose.Types.ObjectId(userId);
+  if (!referenceId || !mongoose.Types.ObjectId.isValid(referenceId)) {
+    // Deliveries must credit against a real order id — refuse orphan credits.
+    return;
+  }
+  const order = await Order.findById(referenceId).select('status riderStage orderNumber').lean();
+  if (!order || (order.status !== 'delivered' && order.riderStage !== 'delivered')) {
+    return;
+  }
+  const existing = await PickerTransaction.findOne({
+    userId: oid,
+    type: 'credit',
+    referenceId,
+    status: 'completed',
+  })
+    .select('_id')
+    .lean();
+  if (existing) return;
+  try {
+    await PickerTransaction.create({
+      userId: oid,
+      type: 'credit',
+      amount,
+      description: description || `Delivery ${order.orderNumber || referenceId}`,
+      referenceId,
+      status: 'completed',
+    });
+  } catch (err) {
+    if ((err as { code?: number }).code === 11000) return;
+    throw err;
+  }
   await PickerWallet.findOneAndUpdate(
     { userId: oid },
     { $inc: { availableBalance: amount, totalEarnings: amount }, $setOnInsert: { userId: oid, currency: 'INR' } },
     { upsert: true },
   );
-  await PickerTransaction.create({
-    userId: oid,
-    type: 'credit',
-    amount,
-    description,
-    referenceId,
-    status: 'completed',
-  });
 }
 
 // ─── Shifts ───────────────────────────────────────────────────────────────────
@@ -236,12 +259,74 @@ export async function listDocuments(userId: string) {
   return PickerDocument.find({ userId: new mongoose.Types.ObjectId(userId) }).lean();
 }
 
+/** Active (non-superseded) KYC docs for admin interview review, with viewable URLs. */
+export async function listDocumentsForAdmin(userId: string) {
+  const docs = await PickerDocument.find({
+    userId: new mongoose.Types.ObjectId(userId),
+    supersededBy: null,
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+  return docs.map((d: Record<string, unknown>) => ({
+    id: String(d._id),
+    documentId: String(d._id),
+    type: String(d.type || ''),
+    side: (d.side as string | null | undefined) || null,
+    status: String(d.status || 'pending'),
+    url: (d.url as string | null | undefined) || null,
+    fileName: (d.fileName as string | null | undefined) || null,
+    documentNumber: (d.documentNumber as string | null | undefined) || null,
+    rejectionReason: (d.rejectionReason as string | null | undefined) || null,
+    reviewedAt: d.reviewedAt || null,
+    createdAt: d.createdAt || null,
+    uploadedAt: d.createdAt || null,
+  }));
+}
+
 export async function uploadDocument(userId: string, type: string, url: string, fileName?: string) {
   return PickerDocument.create({ userId: new mongoose.Types.ObjectId(userId), type, url, fileName, status: 'pending' });
 }
 
 export async function reviewDocument(documentId: string, status: 'approved' | 'rejected', reviewedBy: string, rejectionReason?: string) {
-  return PickerDocument.findByIdAndUpdate(documentId, { status, reviewedBy: new mongoose.Types.ObjectId(reviewedBy), reviewedAt: new Date(), rejectionReason }, { new: true });
+  if (!mongoose.Types.ObjectId.isValid(documentId)) return null;
+  const patch: Record<string, unknown> = {
+    status,
+    reviewedAt: new Date(),
+  };
+  if (mongoose.Types.ObjectId.isValid(reviewedBy)) {
+    patch.reviewedBy = new mongoose.Types.ObjectId(reviewedBy);
+  }
+  if (status === 'rejected') {
+    patch.rejectionReason = rejectionReason || 'Document rejected';
+  } else {
+    patch.rejectionReason = null;
+  }
+  return PickerDocument.findByIdAndUpdate(documentId, { $set: patch }, { new: true });
+}
+
+async function syncOnboardingApplicationDecision(
+  pickerId: string,
+  decision: 'approved' | 'rejected',
+  reviewedBy: string,
+  rejectionReason?: string,
+) {
+  if (!mongoose.Types.ObjectId.isValid(pickerId)) return;
+  const patch: Record<string, unknown> = {
+    status: decision,
+    reviewedAt: new Date(),
+    reviewedBy,
+  };
+  if (decision === 'rejected') {
+    patch.rejectionReason = rejectionReason || 'Rejected by admin';
+  } else {
+    patch.rejectionReason = undefined;
+  }
+  await PickerOnboardingApplication.updateOne(
+    { pickerId: new mongoose.Types.ObjectId(pickerId) },
+    decision === 'approved'
+      ? { $set: { status: 'approved', reviewedAt: patch.reviewedAt, reviewedBy }, $unset: { rejectionReason: 1 } }
+      : { $set: patch },
+  );
 }
 
 // ─── Notifications ────────────────────────────────────────────────────────────
@@ -511,23 +596,179 @@ export async function updateTrainingProgress(userId: string, videoId: string, pr
 
 // ─── Admin Operations ─────────────────────────────────────────────────────────
 
-export async function listPickers(filters: { status?: string; search?: string; warehouseKey?: string; page?: number; limit?: number } = {}) {
-  const { status, search, warehouseKey, page = 1, limit = 50 } = filters;
-  const query: Record<string, unknown> = {};
-  if (status) query.status = status;
+/** Admin Picker Directory row — always uses Mongo ObjectId as primary `id` (never short employee id). */
+function mapPickerUserForAdminDirectory(p: Record<string, unknown>) {
+  const id = String(p._id);
+  const hub = (p.currentLocationId as string | undefined) || null;
+  const phone =
+    p.phoneIsPlaceholder || !p.phone || String(p.phone).startsWith('15') || String(p.phone).startsWith('12')
+      ? ''
+      : String(p.phone);
+  const status = String(p.status || 'PENDING').toUpperCase();
+  const onboarding = (p.onboarding as { submittedForReviewAt?: Date | string; currentStep?: number } | undefined) || {};
+  const submittedForReviewAt = onboarding.submittedForReviewAt
+    ? new Date(onboarding.submittedForReviewAt).toISOString()
+    : null;
+  const inInterview = status === 'PENDING' && Boolean(submittedForReviewAt);
+  const activeShiftId = p.activeShiftId ? String(p.activeShiftId) : null;
+  const isOnline = Boolean(p.isOnline);
+  const onShift = Boolean(activeShiftId) && isOnline;
+  const busy = Boolean(p.activeOrderId) || Boolean(p.onBreak);
+  // Available only while on an active shift and free; otherwise Offline / On shift / Suspended.
+  let workStatus: 'available' | 'on_shift' | 'offline' | 'suspended' = 'offline';
+  if (status === 'SUSPENDED' || status === 'INACTIVE' || status === 'BLOCKED') {
+    workStatus = 'suspended';
+  } else if (onShift && busy) {
+    workStatus = 'on_shift';
+  } else if (onShift) {
+    workStatus = 'available';
+  } else {
+    workStatus = 'offline';
+  }
+  return {
+    ...p,
+    id,
+    _id: id,
+    name: p.name || '',
+    phone,
+    mobile: phone,
+    status,
+    /** Dashboard label while docs await ops lead review. */
+    interviewStatus: inInterview ? 'interview' : status === 'ACTIVE' ? 'approved' : status.toLowerCase(),
+    approvalStatus: inInterview ? 'interview' : status.toLowerCase(),
+    rejectedReason: (p.rejectedReason as string | undefined) || null,
+    notes: p.rejectedReason ? [String(p.rejectedReason)] : [],
+    submittedForReviewAt,
+    appliedAt: submittedForReviewAt || p.createdAt || null,
+    workforceRole: 'picker',
+    source: 'picker_users',
+    hub: hub || '—',
+    darkStore: hub || '—',
+    store: hub || '—',
+    currentLocationId: hub,
+    assignedStore: hub || '—',
+    location: hub || '—',
+    employeeId: (p.employment as { employeeId?: string } | undefined)?.employeeId || null,
+    isOnline,
+    activeShiftId,
+    onShift,
+    onlineStatus: workStatus,
+    workStatus,
+  };
+}
+
+export async function listPickers(
+  filters: {
+    status?: string;
+    search?: string;
+    warehouseKey?: string;
+    page?: number;
+    limit?: number;
+    /** When true (or when search is set), also union HSD/HHD operators. Default Admin Directory = picker-role only. */
+    includeHsd?: boolean;
+    /**
+     * `directory` (default for /pickers): only admin-approved workforce (ACTIVE/SUSPENDED/…).
+     * `approvals` (for /approvals): pending / rejected applicants — not yet in the directory.
+     * `all`: no status gating.
+     */
+    purpose?: 'directory' | 'approvals' | 'all';
+  } = {},
+) {
+  const { status, search, warehouseKey, page = 1, limit = 50, includeHsd = false, purpose = 'directory' } = filters;
+  // Default Admin Picker Directory: only workforceRole=picker (exclude riders / unset / HSD).
+  const query: Record<string, unknown> = { workforceRole: 'picker' };
+  if (status) {
+    query.status = status;
+  } else if (purpose === 'directory') {
+    // Directory = admin-approved pickers only (ACTIVE + operational holds). Pending live under Approvals.
+    query.status = { $in: ['ACTIVE', 'SUSPENDED', 'INACTIVE'] };
+  } else if (purpose === 'approvals') {
+    query.status = { $in: ['PENDING', 'REJECTED'] };
+  }
   if (warehouseKey) query.currentLocationId = warehouseKey;
-  if (search) query.$or = [{ name: { $regex: search, $options: 'i' } }, { phone: { $regex: search, $options: 'i' } }];
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { phone: { $regex: search, $options: 'i' } },
+    ];
+  }
   const skip = (page - 1) * limit;
-  const [pickers, total] = await Promise.all([PickerUser.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(), PickerUser.countDocuments(query)]);
-  return { pickers, total, page, limit, totalPages: Math.ceil(total / limit) };
+  const [rawPickers, totalPicker] = await Promise.all([
+    PickerUser.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    PickerUser.countDocuments(query),
+  ]);
+  const pickers = (rawPickers as Record<string, unknown>[]).map(mapPickerUserForAdminDirectory);
+
+  // HSD union ONLY when searching OR includeHsd=true — never pollute default directory.
+  // Never mix HSD into the approvals queue.
+  const shouldIncludeHsd = purpose !== 'approvals' && (includeHsd || Boolean(search && String(search).trim()));
+  if (!shouldIncludeHsd) {
+    return { pickers, total: totalPicker, page, limit, totalPages: Math.ceil(totalPicker / limit) || 1 };
+  }
+
+  const { listHhdOperators } = await import('../hhd/hhdOperator.bridge');
+  const hsdRows = await listHhdOperators({
+    status,
+    search,
+    warehouseKey,
+    limit: search ? limit : Math.max(limit, 100),
+  });
+
+  const pickerPhones = new Set(
+    pickers
+      .map((p: { phone?: string | null }) => String(p.phone || '').replace(/\D/g, '').slice(-10))
+      .filter((p: string) => p.length >= 7),
+  );
+  const hsdOnly = hsdRows
+    .filter((h) => {
+      const phone = String(h.phone || '').replace(/\D/g, '').slice(-10);
+      return !phone || !pickerPhones.has(phone);
+    })
+    .map((h) => ({ ...h, source: 'hhd' as const }));
+
+  const merged = search
+    ? [...hsdOnly, ...pickers].slice(0, limit)
+    : [...pickers, ...hsdOnly].slice(0, limit);
+  const total = totalPicker + hsdOnly.length;
+  return { pickers: merged, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 }
 
 export async function approvePicker(pickerId: string, approvedBy: string) {
-  return PickerUser.findByIdAndUpdate(pickerId, { status: 'ACTIVE', approvedAt: new Date(), approvedBy: new mongoose.Types.ObjectId(approvedBy) }, { new: true });
+  const patch: Record<string, unknown> = {
+    status: 'ACTIVE',
+    approvedAt: new Date(),
+    rejectedReason: null,
+    rejectedAt: null,
+  };
+  if (mongoose.Types.ObjectId.isValid(approvedBy)) {
+    patch.approvedBy = new mongoose.Types.ObjectId(approvedBy);
+  }
+  const picker = await PickerUser.findByIdAndUpdate(pickerId, { $set: patch }, { new: true });
+  if (picker) {
+    await syncOnboardingApplicationDecision(pickerId, 'approved', approvedBy);
+  }
+  return picker;
 }
 
-export async function rejectPicker(pickerId: string, reason: string) {
-  return PickerUser.findByIdAndUpdate(pickerId, { status: 'REJECTED', rejectedReason: reason, rejectedAt: new Date() }, { new: true });
+export async function rejectPicker(pickerId: string, reason: string, rejectedBy = 'system') {
+  const rejectionReason = String(reason || '').trim() || 'Rejected by admin';
+  const picker = await PickerUser.findByIdAndUpdate(
+    pickerId,
+    {
+      $set: {
+        status: 'REJECTED',
+        rejectedReason: rejectionReason,
+        rejectedAt: new Date(),
+        isOnline: false,
+        onlineSince: null,
+      },
+    },
+    { new: true },
+  );
+  if (picker) {
+    await syncOnboardingApplicationDecision(pickerId, 'rejected', rejectedBy, rejectionReason);
+  }
+  return picker;
 }
 
 export async function listWithdrawalRequests(filters: { status?: string; page?: number; limit?: number } = {}) {
@@ -591,7 +832,25 @@ export async function logAction(userId: string, action: string, details?: Record
 }
 
 export async function getPickerById(pickerId: string) {
-  return PickerUser.findById(pickerId).lean();
+  const raw = String(pickerId || '').trim();
+  if (mongoose.Types.ObjectId.isValid(raw) && raw.length === 24) {
+    const picker = await PickerUser.findById(raw).lean();
+    if (picker) return mapPickerUserForAdminDirectory(picker as Record<string, unknown>);
+  }
+  // Phone fallback within picker-role accounts
+  const digits = raw.replace(/\D/g, '').slice(-10);
+  if (digits.length >= 7) {
+    const byPhone = await PickerUser.findOne({
+      workforceRole: 'picker',
+      phone: { $regex: digits },
+      phoneIsPlaceholder: { $ne: true },
+    }).lean();
+    if (byPhone) return mapPickerUserForAdminDirectory(byPhone as Record<string, unknown>);
+  }
+  const { getHhdOperatorById } = await import('../hhd/hhdOperator.bridge');
+  const hhd = await getHhdOperatorById(raw);
+  if (hhd) return { ...hhd, source: 'hhd' };
+  return null;
 }
 
 export async function updatePickerStatus(pickerId: string, status: string, updatedBy: string) {
@@ -955,38 +1214,43 @@ export async function completeRiderOrder(
   otp: string,
   photo?: string,
 ) {
-  const order = await Order.findOne({ _id: new mongoose.Types.ObjectId(orderId), riderId: pickerId });
+  const order = await Order.findOne({
+    _id: new mongoose.Types.ObjectId(orderId),
+    $or: [{ riderId: pickerId }, { pickerId: new mongoose.Types.ObjectId(pickerId) }],
+  });
   if (!order) throw Object.assign(new Error('Order not found or not assigned to you'), { statusCode: 404 });
 
-  if (order.status === 'delivered') {
-    throw Object.assign(new Error('Order already delivered'), { statusCode: 409 });
+  if (order.status === 'delivered' || order.riderStage === 'delivered') {
+    return order.toObject();
+  }
+  if (order.riderStage !== 'picked_up') {
+    throw Object.assign(new Error('Complete pickup before delivering this order'), { statusCode: 409 });
+  }
+  if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'cod_pending') {
+    throw Object.assign(new Error('Payment is not confirmed for this order'), { statusCode: 409 });
+  }
+  if (!order.deliveryOtp || order.deliveryOtp !== String(otp)) {
+    order.otpAttempts = (order.otpAttempts || 0) + 1;
+    await order.save();
+    throw Object.assign(new Error('Invalid delivery OTP'), { statusCode: 400 });
   }
 
-  if (order.deliveryOtp) {
-    if (order.otpAttempts >= 5) {
-      throw Object.assign(new Error('Too many OTP attempts'), { statusCode: 429 });
-    }
-    if (order.deliveryOtp !== String(otp)) {
-      order.otpAttempts = (order.otpAttempts || 0) + 1;
-      await order.save();
-      throw Object.assign(new Error('Invalid delivery OTP'), { statusCode: 400 });
-    }
-    order.otpVerified = true;
-  }
-
+  order.otpVerified = true;
+  order.riderStage = 'delivered';
   order.status = 'delivered';
   order.deliveredAt = new Date();
   order.timeline.push({
     status: 'delivered',
-    timestamp: new Date(),
-    note: photo ? `Proof photo: ${photo}` : '',
+    timestamp: order.deliveredAt,
+    note: photo ? `Proof photo: ${photo}` : 'Delivered and verified by OTP',
     actor: `rider:${pickerId}`,
   } as any);
-
   await order.save();
 
-  const deliveryEarning = 25;
-  await creditRiderWallet(pickerId, deliveryEarning, `Delivery earnings — Order #${order.orderNumber}`, String(order._id));
+  if (order.riderPayout) {
+    await creditEarnings(pickerId, Math.round(order.riderPayout), `Delivery ${order.orderNumber}`, String(order._id));
+  }
+  await PickerUser.updateOne({ _id: pickerId }, { $set: { activeOrderId: null } });
 
   emitOrderStatus(String(order._id), { status: 'delivered', orderNumber: order.orderNumber, actor: `rider:${pickerId}` });
   return order.toObject();
@@ -1009,3 +1273,175 @@ async function creditRiderWallet(pickerId: string, amount: number, description: 
     currency: 'INR',
   });
 }
+
+// ─── Admin: OT requests from attendance ───────────────────────────────────────
+
+export async function listOtRequestsFromAttendance(filters: { status?: string; page?: number; limit?: number } = {}) {
+  const page = Math.max(1, Number(filters.page) || 1);
+  const limit = Math.min(200, Math.max(1, Number(filters.limit) || 50));
+  const query: Record<string, unknown> = { overtimeMinutes: { $gt: 0 } };
+  if (filters.status) {
+    const s = String(filters.status).toLowerCase();
+    if (s === 'pending' || s === 'approved' || s === 'rejected') {
+      query.otApprovalStatus = s;
+    }
+  }
+
+  const [rows, total] = await Promise.all([
+    PickerAttendance.find(query)
+      .sort({ punchIn: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('userId', 'name phone workforceRole currentLocationId')
+      .lean(),
+    PickerAttendance.countDocuments(query),
+  ]);
+
+  const { resolveSalaryConfig, dailySalary, otAmountFromMinutes, hubYearMonth } = await import('./picker.salary');
+  const cfg = await resolveSalaryConfig();
+
+  const requests = (rows as any[]).map((a) => {
+    const user = a.userId && typeof a.userId === 'object' ? a.userId : null;
+    const punchIn = a.punchIn ? new Date(a.punchIn) : new Date();
+    const ym = hubYearMonth(punchIn);
+    const daily = dailySalary(cfg, ym.year, ym.monthIndex0);
+    const otMinutes = Number(a.overtimeMinutes) || 0;
+    const otAmount = otAmountFromMinutes(cfg, daily, otMinutes);
+    const pickerId = user?._id ? String(user._id) : String(a.userId || '');
+    const dateKey = `${punchIn.getFullYear()}-${String(punchIn.getMonth() + 1).padStart(2, '0')}-${String(punchIn.getDate()).padStart(2, '0')}`;
+    return {
+      id: String(a._id),
+      _id: String(a._id),
+      requestId: String(a._id),
+      pickerId,
+      name: (user?.name as string) || 'Picker',
+      phone: (user?.phone as string) || '',
+      date: dateKey,
+      otMinutes,
+      overtimeMinutes: otMinutes,
+      otAmount,
+      otAmountDisplay: `₹${otAmount.toLocaleString('en-IN')}`,
+      status: (a.otApprovalStatus as string) || 'pending',
+      otApprovalStatus: (a.otApprovalStatus as string) || 'pending',
+      warehouseKey: a.warehouseKey || user?.currentLocationId || null,
+      punchIn: a.punchIn,
+      punchOut: a.punchOut || null,
+    };
+  });
+
+  return { requests, total, page, limit };
+}
+
+export async function decideOtRequest(
+  requestId: string,
+  decision: string,
+  decidedBy: string,
+  reason?: string,
+) {
+  if (!mongoose.Types.ObjectId.isValid(requestId)) {
+    throw Object.assign(new Error('Invalid OT request id'), { statusCode: 400 });
+  }
+  const d = String(decision || '').trim().toLowerCase();
+  const approved = d === 'approve' || d === 'approved' || d === 'accept';
+  const rejected = d === 'reject' || d === 'rejected' || d === 'deny';
+  if (!approved && !rejected) {
+    throw Object.assign(new Error('decision must be approve or reject'), { statusCode: 400 });
+  }
+  const status = approved ? 'approved' : 'rejected';
+  const updated = (await PickerAttendance.findByIdAndUpdate(
+    requestId,
+    {
+      otApprovalStatus: status,
+      otApprovedBy: decidedBy,
+      otApprovedAt: new Date(),
+      ...(rejected && reason ? { otRejectionReason: reason } : {}),
+    },
+    { new: true },
+  ).lean()) as { _id: unknown; overtimeMinutes?: number } | null;
+  if (!updated) throw Object.assign(new Error('OT request not found'), { statusCode: 404 });
+  return {
+    requestId: String(updated._id),
+    decision: status,
+    decidedBy,
+    otApprovalStatus: status,
+    overtimeMinutes: updated.overtimeMinutes,
+  };
+}
+
+/** Resolve a picker ObjectId from admin query (ObjectId, phone). */
+export async function resolvePickerIdForAdmin(pickerIdOrPhone: string): Promise<string | null> {
+  const raw = String(pickerIdOrPhone || '').trim();
+  if (!raw) return null;
+  if (mongoose.Types.ObjectId.isValid(raw) && raw.length === 24) {
+    const u = (await PickerUser.findById(raw).select('_id').lean()) as { _id: unknown } | null;
+    if (u) return String(u._id);
+  }
+  const digits = raw.replace(/\D/g, '').slice(-10);
+  if (digits.length >= 7) {
+    const u = (await PickerUser.findOne({
+      workforceRole: 'picker',
+      phone: { $regex: digits },
+      phoneIsPlaceholder: { $ne: true },
+    })
+      .select('_id')
+      .lean()) as { _id: unknown } | null;
+    if (u) return String(u._id);
+  }
+  return null;
+}
+
+/** Current-month salary rows for all workforceRole=picker accounts. */
+export async function listPickerPayroll(month?: string) {
+  const pickers = await PickerUser.find({ workforceRole: 'picker' })
+    .select('_id name phone status currentLocationId')
+    .lean();
+  const { getMonthlySalarySummary } = await import('./picker.app.service');
+  const rows = [];
+  for (const p of pickers) {
+    const summary = await getMonthlySalarySummary(String(p._id), month);
+    rows.push({
+      id: String(p._id),
+      _id: String(p._id),
+      pickerId: String(p._id),
+      name: p.name || '',
+      phone: p.phone || '',
+      status: p.status,
+      hub: p.currentLocationId || '—',
+      store: p.currentLocationId || '—',
+      darkStore: p.currentLocationId || '—',
+      month: summary.month,
+      monthKey: summary.monthKey,
+      monthlySalary: summary.regular.monthlySalary,
+      fixedSalary: summary.fixedSalary ?? summary.regular.monthlySalary,
+      fixedSalaryDisplay: summary.fixedSalaryDisplay ?? summary.regular.monthlySalaryDisplay,
+      finalSalary: summary.finalSalary,
+      finalSalaryDisplay: summary.finalSalaryDisplay,
+      leaveDeduction: summary.regular.leaveDeduction,
+      otEarnings: summary.overtime.otEarnings,
+      paidDays: summary.regular.paidDays,
+      unpaidLeave: summary.regular.unpaidLeave,
+      payoutStatus: 'pending',
+      net: summary.finalSalary,
+      amount: summary.finalSalary,
+      total: summary.finalSalary,
+      base: summary.regular.monthlySalary,
+      person: p.name || '',
+      pickerName: p.name || '',
+    });
+  }
+  const payoutTotal = rows.reduce((s, r) => s + (Number(r.finalSalary) || 0), 0);
+  return {
+    rows,
+    payroll: rows,
+    items: rows,
+    total: rows.length,
+    month: rows[0]?.month || month || null,
+    summary: {
+      payoutTotal,
+      settled: 0,
+      pending: payoutTotal,
+      count: rows.length,
+    },
+  };
+}
+

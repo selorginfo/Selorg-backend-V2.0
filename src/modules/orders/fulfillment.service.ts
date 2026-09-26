@@ -64,8 +64,19 @@ export async function assertCustomerOrderPickable(hhdOrderId: string): Promise<I
   if (!order) {
     throw new AppError('Invalid order/package', 404, 'ORDER_NOT_FOUND');
   }
-  if (order.status === 'cancelled') {
+  if (order.status === 'cancelled' || order.fulfillmentStage === 'cancelled') {
     throw new AppError('This order has been cancelled', 409, 'ORDER_CANCELLED');
+  }
+  if (order.status === 'delivered' || order.fulfillmentStage === 'delivered') {
+    throw new AppError('This order is already delivered', 409, 'ORDER_DELIVERED');
+  }
+  const paymentReady = order.paymentStatus === 'paid' || order.paymentStatus === 'cod_pending';
+  if (!paymentReady) {
+    throw new AppError('Payment is not confirmed — cannot pick this order', 409, 'PAYMENT_NOT_CONFIRMED');
+  }
+  // Waiting-for-picker or already accepted by this flow.
+  if (!['confirmed', 'getting-packed'].includes(order.status) && order.fulfillmentStage !== 'confirmed' && order.fulfillmentStage !== 'picker_accepted') {
+    throw new AppError(`Order cannot be picked in status ${order.status}`, 409, 'WRONG_STATUS');
   }
   return order;
 }
@@ -227,6 +238,7 @@ async function confirmAndTagOrder(orderId: string): Promise<IOrder | null> {
   const order = await Order.findById(orderId);
   if (!order || order.status === 'cancelled') return order;
 
+  // Reserve a bag label for ops, but bagScannedAt stays null until HSD scans the bag.
   const bagCode = order.bagCode || bagCodeForOrderNumber(order.orderNumber);
   const deliveryOtp = order.deliveryOtp || generateDeliveryOtp();
   const hubKey = order.offerHubKey || DEFAULT_HUB_KEY;
@@ -234,6 +246,7 @@ async function confirmAndTagOrder(orderId: string): Promise<IOrder | null> {
     bagCode,
     deliveryOtp,
     offerHubKey: hubKey,
+    fulfillmentStage: 'confirmed',
   };
 
   if (order.status === 'pending') {
@@ -246,14 +259,22 @@ async function confirmAndTagOrder(orderId: string): Promise<IOrder | null> {
           timeline: {
             status: 'confirmed',
             timestamp: new Date(),
-            note: 'Order confirmed by store',
+            note: 'Order confirmed — waiting for picker',
             actor: 'system',
           },
         },
       },
     );
   } else {
-    await Order.updateOne({ _id: order._id }, { $set: set });
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          ...set,
+          ...(order.fulfillmentStage ? {} : { fulfillmentStage: 'confirmed' }),
+        },
+      },
+    );
   }
 
   return Order.findById(orderId);
@@ -305,46 +326,153 @@ export async function runPostOrderIntegrations(
   }
 }
 
-export async function markCustomerPicking(hhdOrderId: string): Promise<void> {
+export async function markCustomerPicking(
+  hhdOrderId: string,
+  opts?: {
+    hhdUserId?: string;
+    hhdUserName?: string;
+    hsdDeviceId?: string | null;
+    hsdSessionId?: string | null;
+    pickerShiftId?: string | null;
+  },
+): Promise<void> {
   const order = await findCustomerOrderByHhdOrderId(hhdOrderId);
   if (!order || order.status === 'cancelled') return;
-  if (order.status !== 'confirmed') return;
 
-  await Order.updateOne(
-    { _id: order._id, status: 'confirmed' },
-    {
-      $set: { status: 'getting-packed' },
-      $push: {
-        timeline: {
-          status: 'getting-packed',
-          timestamp: new Date(),
-          note: 'Order is being packed',
-          actor: 'darkstore',
-        },
-      },
-    },
-  );
+  const { applyFulfillmentTransition } = await import('./order-lifecycle.apply');
+  const { deriveFulfillmentStage } = await import('./order-lifecycle');
 
-  eventBus.emit(EVENT_TYPES.ORDER_PICKING_STARTED, {
-    orderId: String(order._id),
-    orderNumber: order.orderNumber,
-    userId: String(order.userId),
-    hubKey: order.offerHubKey || DEFAULT_HUB_KEY,
-    offerHubKey: order.offerHubKey || DEFAULT_HUB_KEY,
-    status: 'getting-packed',
+  const hhdUserId =
+    opts?.hhdUserId && mongoose.Types.ObjectId.isValid(opts.hhdUserId)
+      ? new mongoose.Types.ObjectId(opts.hhdUserId)
+      : null;
+  const pickerName = String(opts?.hhdUserName || '').trim() || 'HSD Operator';
+  const stage = deriveFulfillmentStage(order);
+
+  // Attach HSD assignee even if already past confirmed (idempotent claim).
+  const setFields: Record<string, unknown> = {};
+  if (hhdUserId) {
+    setFields.hhdUserId = hhdUserId;
+    setFields['adminFulfillment.pickerName'] = pickerName;
+  }
+  if (opts?.hsdDeviceId) setFields.hsdDeviceId = opts.hsdDeviceId;
+  if (opts?.hsdSessionId) setFields.hsdSessionId = opts.hsdSessionId;
+  if (opts?.pickerShiftId) setFields.pickerShiftId = opts.pickerShiftId;
+
+  if (stage === 'confirmed' || stage === 'pending') {
+    await applyFulfillmentTransition({
+      orderId: String(order._id),
+      to: 'picker_accepted',
+      actor: hhdUserId ? `hsd:${opts?.hhdUserId}` : 'darkstore',
+      actorUserId: opts?.hhdUserId,
+      note: hhdUserId ? `Picker accepted — packing started by ${pickerName}` : 'Picker accepted',
+      requireFrom: stage === 'pending' ? ['pending', 'confirmed'] : ['confirmed'],
+      set: setFields,
+    });
+    return;
+  }
+
+  if (Object.keys(setFields).length) {
+    await Order.updateOne({ _id: order._id }, { $set: setFields });
+  }
+}
+
+/** Sync customer_orders line itemStatus from HSD pick scans (Admin order detail). */
+export async function syncCustomerItemPicked(
+  hhdOrderId: string,
+  itemCode: string,
+  opts?: { scannedQuantity?: number; quantity?: number },
+): Promise<void> {
+  const order = await findCustomerOrderByHhdOrderId(hhdOrderId);
+  if (!order || !Array.isArray(order.items) || !order.items.length) return;
+
+  const code = String(itemCode || '').trim();
+  if (!code) return;
+
+  const qtyDone =
+    opts?.quantity != null && opts?.scannedQuantity != null
+      ? Number(opts.scannedQuantity) >= Number(opts.quantity)
+      : true;
+  if (!qtyDone) return;
+
+  // Resolve productId(s) for this HHD itemCode (SKU or product ObjectId).
+  const productIds = new Set<string>();
+  if (mongoose.Types.ObjectId.isValid(code)) productIds.add(code);
+  const bySku = await Product.find({ sku: new RegExp(`^${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') })
+    .select('_id')
+    .lean();
+  for (const p of bySku) productIds.add(String(p._id));
+
+  let matched = false;
+  const nextItems = order.items.map((it: Record<string, unknown>) => {
+    const productId = String(it.productId || '');
+    const sku = String(it.sku || it.itemCode || it.productSku || '').trim();
+    const hit =
+      productIds.has(productId) ||
+      productId.toLowerCase() === code.toLowerCase() ||
+      (sku.length > 0 && sku.toLowerCase() === code.toLowerCase()) ||
+      (order.items.length === 1 && String(it.itemStatus || 'pending') === 'pending');
+    if (!hit) return it;
+    matched = true;
+    if (String(it.itemStatus || 'pending') === 'picked') return it;
+    return { ...it, itemStatus: 'picked' };
   });
-  const latest = await Order.findById(order._id);
-  if (latest) {
-    fireAndForget('notify-packing', () =>
-      notifyCustomerOrderLifecycle(latest, 'getting-packed', { actor: 'darkstore' }),
-    );
+
+  // Single-line order fallback: HSD scanned the only line.
+  if (!matched && order.items.length === 1) {
+    const it = order.items[0] as Record<string, unknown>;
+    nextItems[0] = { ...it, itemStatus: 'picked' };
+    matched = true;
+  }
+
+  if (!matched) return;
+
+  // Prefer positional $set so Mongoose subdocs update reliably.
+  const setOps: Record<string, unknown> = {};
+  nextItems.forEach((it, idx) => {
+    if (String((it as Record<string, unknown>).itemStatus) === 'picked') {
+      setOps[`items.${idx}.itemStatus`] = 'picked';
+    }
+  });
+  if (Object.keys(setOps).length) {
+    await Order.updateOne({ _id: order._id }, { $set: setOps });
+  } else {
+    await Order.updateOne({ _id: order._id }, { $set: { items: nextItems } });
   }
 }
 
 export async function onHhdStatusChanged(hhdOrderId: string, hhdStatus: string): Promise<void> {
-  if (PICKING_HHD_STATUSES.has(hhdStatus) || hhdStatus === ORDER_STATUS.PENDING) {
-    if (hhdStatus !== ORDER_STATUS.PENDING) {
-      await markCustomerPicking(hhdOrderId);
+  if (hhdStatus === ORDER_STATUS.HANDED_OFF) return;
+
+  if (hhdStatus === ORDER_STATUS.BAG_SCANNED) {
+    const customer = await findCustomerOrderByHhdOrderId(hhdOrderId);
+    if (customer) {
+      const hhd = await HHDOrder.findOne({ orderId: hhdOrderId }).select('bagId').lean();
+      const bag = String(hhd?.bagId || customer.bagCode || '').trim();
+      await Order.updateOne(
+        { _id: customer._id },
+        {
+          $set: {
+            ...(bag ? { bagCode: bag } : {}),
+            bagScannedAt: new Date(),
+          },
+        },
+      );
+    }
+  }
+
+  if (PICKING_HHD_STATUSES.has(hhdStatus)) {
+    await markCustomerPicking(hhdOrderId);
+    if (hhdStatus === ORDER_STATUS.RACK_ASSIGNED || hhdStatus === ORDER_STATUS.PHOTO_VERIFIED) {
+      const hhd = await HHDOrder.findOne({ orderId: hhdOrderId }).select('rackLocation targetRackCode').lean();
+      const bay = String(hhd?.rackLocation || hhd?.targetRackCode || '').trim();
+      const customer = await findCustomerOrderByHhdOrderId(hhdOrderId);
+      if (customer && bay) {
+        await Order.updateOne(
+          { _id: customer._id },
+          { $set: { dispatchBay: bay, ...(hhdStatus === ORDER_STATUS.RACK_ASSIGNED ? { rackedAt: new Date() } : {}) } },
+        );
+      }
     }
   }
 }
@@ -376,8 +504,17 @@ export async function completeHandover(input: {
     throw new AppError('Order already handed over', 409, 'ALREADY_HANDED_OVER');
   }
 
-  if (!['confirmed', 'getting-packed'].includes(customer.status)) {
-    throw new AppError('Order is not ready for handover', 409, 'WRONG_STATUS');
+  const paymentReady = customer.paymentStatus === 'paid' || customer.paymentStatus === 'cod_pending';
+  const { deriveFulfillmentStage } = await import('./order-lifecycle');
+  const { applyFulfillmentTransition } = await import('./order-lifecycle.apply');
+  const stage = deriveFulfillmentStage(customer);
+  if (!paymentReady || !['confirmed', 'picker_accepted', 'packed_in_rack'].includes(stage)) {
+    if (!['confirmed', 'getting-packed'].includes(customer.status) || !paymentReady) {
+      throw new AppError('Order is not ready for handover', 409, 'WRONG_STATUS');
+    }
+  }
+  if (stage === 'packed_in_rack' && customer.riderStage === 'offered') {
+    throw new AppError('Order already handed over', 409, 'ALREADY_HANDED_OVER');
   }
 
   if (input.hub && customer.offerHubKey && input.hub !== customer.offerHubKey) {
@@ -389,38 +526,39 @@ export async function completeHandover(input: {
   const dispatchBay =
     String(input.dispatchBay || input.rackCode || customer.dispatchBay || '').trim() || null;
 
-  const claimed = await Order.findOneAndUpdate(
-    {
-      _id: customer._id,
-      status: { $in: ['confirmed', 'getting-packed'] },
-      $or: [{ riderStage: null }, { riderStage: { $exists: false } }],
-    },
-    {
-      $set: {
-        status: 'getting-packed',
-        riderStage: 'offered',
+  const { pickerConfig } = await import('../picker/picker.config');
+  const offerExpiresAt = new Date(now.getTime() + pickerConfig.offerExpirySeconds * 1000);
+
+  let claimed: IOrder;
+  try {
+    claimed = await applyFulfillmentTransition({
+      orderId: String(customer._id),
+      to: 'packed_in_rack',
+      actor: `hsd:${input.scannedBy}`,
+      actorUserId: input.scannedBy,
+      note: dispatchBay
+        ? `Packed & placed in rack ${dispatchBay} — waiting for rider`
+        : 'Packed & placed in rack — waiting for rider',
+      requireFrom: ['picker_accepted', 'packed_in_rack'],
+      set: {
         pickerId: null,
+        riderId: null,
         bagCode,
+        bagScannedAt: customer.bagScannedAt || now,
+        rackedAt: now,
         ...(dispatchBay ? { dispatchBay } : {}),
         offerHubKey: input.hub || customer.offerHubKey || DEFAULT_HUB_KEY,
         deliveryOtp: customer.deliveryOtp || generateDeliveryOtp(),
+        offerExpiresAt,
+        ...(input.deviceId ? { hsdDeviceId: input.deviceId } : {}),
       },
-      $push: {
-        timeline: {
-          status: 'getting-packed',
-          timestamp: now,
-          note: dispatchBay
-            ? `Package racked at ${dispatchBay} — ready for rider pickup`
-            : 'Package handed over for delivery',
-          actor: 'darkstore',
-        },
-      },
-    },
-    { new: true },
-  );
-
-  if (!claimed) {
-    throw new AppError('Order already handed over', 409, 'ALREADY_HANDED_OVER');
+    });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === 'INVALID_FULFILLMENT_TRANSITION' || code === 'WRONG_FULFILLMENT_STAGE') {
+      throw new AppError('Order already handed over', 409, 'ALREADY_HANDED_OVER');
+    }
+    throw err;
   }
 
   logger.info('[fulfillment] completeHandover offered to riders', {
@@ -428,6 +566,7 @@ export async function completeHandover(input: {
     orderNumber: claimed.orderNumber,
     previousStatus: customer.status,
     nextStatus: claimed.status,
+    fulfillmentStage: claimed.fulfillmentStage,
     riderStage: claimed.riderStage,
     pickerId: claimed.pickerId ? String(claimed.pickerId) : null,
     offerHubKey: claimed.offerHubKey || null,
@@ -468,6 +607,7 @@ export async function completeHandover(input: {
     dispatchBay,
     rackCode: dispatchBay,
     status: claimed.status,
+    fulfillmentStage: claimed.fulfillmentStage,
     riderStage: claimed.riderStage,
   };
 
@@ -484,6 +624,8 @@ export async function completeHandover(input: {
         ? `Order ${claimed.orderNumber} ready at ${dispatchBay}`
         : `Order ${claimed.orderNumber} is ready for pickup`,
     );
+    const { tryFormBulkBatch } = await import('../delivery/bulk-detect.service');
+    await tryFormBulkBatch(claimed.offerHubKey || DEFAULT_HUB_KEY);
   });
 
   return {
@@ -541,7 +683,7 @@ export async function notifyCustomerOrderLifecycle(
 
   const dedupeKey = `order:${orderId}:${status}:${_opts?.note || 'default'}`;
   try {
-    await Notification.create({
+    const created = await Notification.create({
       userId: new mongoose.Types.ObjectId(userId),
       title: copy.title,
       body: copy.body,
@@ -551,6 +693,7 @@ export async function notifyCustomerOrderLifecycle(
       dedupeKey,
       deliveryStatus: 'pending',
     });
+    orderRealtime.publishInboxNotification(userId, created);
   } catch (err) {
     const code = (err as { code?: number })?.code;
     if (code !== 11000) {
@@ -620,6 +763,7 @@ async function notifyHubRiders(order: IOrder, title: string, body: string): Prom
   const { resolveWarehouseKey } = await import('../picker/picker.hub');
   const candidates = await PickerUser.find({
     status: 'ACTIVE',
+    isOnline: true,
     $or: [{ workforceRole: 'rider' }, { workforceRole: { $exists: false } }, { workforceRole: null }],
   })
     .select('_id currentLocationId')

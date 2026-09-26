@@ -220,7 +220,7 @@ async function materializeFromCluster(pickerId: string): Promise<IPickerBulkBatc
       returnToHub: false,
       paymentMode: paymentModeOf(order),
       codAmount: codAmountOf(order) ?? undefined,
-      requiresOtp: false,
+      requiresOtp: Boolean(order.deliveryOtp),
       payout,
     } as IBulkBatchStop;
   });
@@ -522,10 +522,11 @@ export async function deliverStop(
   const order = await Order.findById(stop.orderId);
   if (!order) throw new AppError('Order not found.', 404, 'ORDER_NOT_FOUND');
 
-  if (stop.requiresOtp && order.deliveryOtp) {
-    if (!input.otp || String(input.otp) !== String(order.deliveryOtp)) {
-      throw new AppError('Incorrect OTP. Please try again.', 400, 'INCORRECT_OTP');
-    }
+  if (order.deliveryOtp && String(input.otp || '') !== String(order.deliveryOtp)) {
+    throw new AppError('Incorrect OTP. Please try again.', 400, 'INCORRECT_OTP');
+  }
+  if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'cod_pending') {
+    throw new AppError('Payment is not confirmed for this order.', 409, 'PAYMENT_NOT_CONFIRMED');
   }
 
   const expectedCod = stop.codAmount ?? null;
@@ -563,9 +564,7 @@ export async function deliverStop(
   order.bulkBatchId = batch.batchId;
   if (expectedCod != null && expectedCod > 0) {
     order.codCollectedAmount = expectedCod;
-    order.paymentStatus = 'cod_pending';
-  } else if (order.paymentStatus !== 'paid') {
-    order.paymentStatus = 'paid';
+    if (order.paymentStatus !== 'paid') order.paymentStatus = 'cod_pending';
   }
   order.timeline.push({ status: 'delivered', timestamp: deliveredAt, actor: 'rider', note: `Bulk stop ${stop.stopId} delivered` });
   await order.save();

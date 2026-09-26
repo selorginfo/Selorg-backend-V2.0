@@ -500,7 +500,7 @@ export async function getAppOnboardingState(pickerId: string) {
     verificationItem('documents', 'Documents submitted', documentsSubmitted ? 'Done' : 'Pending'),
     verificationItem('kyc', 'Aadhaar & PAN KYC', combineKycTone(kycTone(aadhaar), kycTone(pan))),
     verificationItem('face', 'Face verification', faceTone(user.faceVerificationStatus, submitted, Boolean(user.faceImageUrl))),
-    verificationItem('approval', 'Manager approval', approvalTone(state, submitted)),
+    verificationItem('approval', 'Interview approval', approvalTone(state, submitted)),
   ];
 
   const bankDetailsComplete = Boolean(bank);
@@ -527,7 +527,7 @@ export async function getAppOnboardingState(pickerId: string) {
     nextAction,
     bankDetailsComplete,
     deviceCollected,
-    canReapply: false,
+    canReapply: state === 'REJECTED',
   };
 }
 
@@ -775,9 +775,18 @@ export async function verifyManagerOtp(pickerId: string, otpRaw?: string) {
 export async function confirmDeviceCollection(pickerId: string, deviceIdRaw?: string) {
   const user = await PickerUser.findById(pickerId);
   if (!user) throw AppError.notFound('User');
+  if (user.activeDeviceId) {
+    const existing = await PickerDevice.findOne({ deviceId: user.activeDeviceId, status: 'assigned' });
+    if (existing) {
+      return { acknowledged: true, deviceId: existing.deviceId };
+    }
+  }
   let device = deviceIdRaw
     ? await PickerDevice.findOne({ deviceId: deviceIdRaw })
     : await PickerDevice.findOne({ assignedTo: oid(pickerId), status: 'assigned' });
+  if (device && device.status === 'assigned' && device.assignedTo && String(device.assignedTo) !== String(pickerId)) {
+    throw new AppError('This HSD device is already assigned to another picker.', 409, 'DEVICE_ALREADY_ASSIGNED');
+  }
   if (!device) {
     device = await PickerDevice.findOne({
       status: 'available',
@@ -1345,6 +1354,7 @@ export async function getMonthlySalarySummary(pickerId: string, month?: string) 
     currency: 'INR',
     config: {
       monthlySalary: cfg.monthlySalary,
+      fixedSalary: cfg.monthlySalary,
       standardShiftHours: cfg.standardShiftMinutes / 60,
       breakMinutes: cfg.breakMinutes,
       startHandoverMinutes: cfg.startHandoverMinutes,
@@ -1358,6 +1368,8 @@ export async function getMonthlySalarySummary(pickerId: string, month?: string) 
     regular: {
       monthlySalary: payroll.monthlySalary,
       monthlySalaryDisplay: rupees(payroll.monthlySalary),
+      fixedSalary: payroll.monthlySalary,
+      fixedSalaryDisplay: rupees(payroll.monthlySalary),
       dailySalary: payroll.dailySalary,
       dailySalaryDisplay: rupees(payroll.dailySalary),
       workingDays: payroll.workingDays,
@@ -1380,10 +1392,13 @@ export async function getMonthlySalarySummary(pickerId: string, month?: string) 
       weekOffWorkEarnings: payroll.weekOffWorkEarnings,
       weekOffWorkEarningsDisplay: rupees(payroll.weekOffWorkEarnings),
     },
+    fixedSalary: payroll.monthlySalary,
+    fixedSalaryDisplay: rupees(payroll.monthlySalary),
     finalSalary: payroll.finalSalary,
     finalSalaryDisplay: rupees(payroll.finalSalary),
     breakdown: {
       monthlySalary: rupees(payroll.monthlySalary),
+      fixedSalary: rupees(payroll.monthlySalary),
       workingDays: String(payroll.workingDays),
       weekOffs: String(payroll.weekOffsPaid),
       paidDays: String(payroll.paidDays),
@@ -1399,7 +1414,8 @@ export async function getMonthlySalarySummary(pickerId: string, month?: string) 
     formula: {
       dailySalary: `Monthly Salary ÷ ${payroll.monthlyWorkingDays} working days`,
       otHourlyRate: `(Daily Salary ÷ ${cfg.standardShiftMinutes / 60}) × ${cfg.overtimeMultiplier}`,
-      finalSalary: 'Monthly Salary − Leave Deduction + OT Earnings + Week-off Work Earnings',
+      finalSalary:
+        'Fixed Monthly Salary (₹13,000 default) − Leave Deduction (after month close) + OT Earnings + Week-off Work Earnings',
     },
   };
 }

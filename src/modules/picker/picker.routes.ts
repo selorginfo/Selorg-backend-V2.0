@@ -250,6 +250,7 @@ adminRouter.get('/pickers/:id/face-verification', authenticateAdmin, ctrl.adminG
 adminRouter.post('/pickers/:id/link-hhd', authenticateAdmin, ctrl.adminLinkHHD);
 adminRouter.delete('/pickers/:id/link-hhd', authenticateAdmin, ctrl.adminUnlinkHHD);
 adminRouter.patch('/pickers/:id/documents/review', authenticateAdmin, ctrl.adminReviewDocument);
+adminRouter.get('/pickers/:id/documents', authenticateAdmin, ctrl.adminListPickerDocuments);
 adminRouter.patch('/pickers/:id/bank/:accountId/review', authenticateAdmin, ctrl.adminReviewBankAccount);
 adminRouter.patch('/pickers/:id/upi/review', authenticateAdmin, ctrl.adminReviewUpiPayout);
 adminRouter.patch('/pickers/:id/face-verification/override', authenticateAdmin, ctrl.adminOverrideFaceVerification);
@@ -261,6 +262,11 @@ adminRouter.get('/payout-verifications', authenticateAdmin, ctrl.adminListPayout
 // Withdrawals
 adminRouter.get('/withdrawals', authenticateAdmin, ctrl.adminListWithdrawals);
 adminRouter.put('/withdrawals/:requestId/process', authenticateAdmin, ctrl.adminProcessWithdrawal);
+
+// Salary / payroll (real getMonthlySalarySummary — no invented numbers)
+adminRouter.get('/salary/monthly', authenticateAdmin, ctrl.adminGetPickerMonthlySalary);
+adminRouter.get('/salary', authenticateAdmin, ctrl.adminListPickerPayroll);
+adminRouter.get('/payroll', authenticateAdmin, ctrl.adminListPickerPayroll);
 
 // Attendance
 adminRouter.get('/attendance/export', authenticateAdmin, ctrl.adminExportAttendance);

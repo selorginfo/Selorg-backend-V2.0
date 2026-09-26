@@ -18,8 +18,20 @@ const router = Router();
 router.post('/assign', optionalCustomerAuth, assignStore);
 router.get('/:storeId/inventory', optionalCustomerAuth, getStoreInventory);
 
+const STORE_ADMIN_ROLES = [
+  'admin',
+  'super_admin',
+  'darkstore',
+  'dark_store_manager',
+  'store_manager',
+  'warehouse',
+  'warehouse_manager',
+  'operations_admin',
+  'operations',
+] as const;
+
 export const merchAdminRouter = Router();
-merchAdminRouter.use(authenticateAdmin, requireRole('admin', 'super_admin'));
+merchAdminRouter.use(authenticateAdmin, requireRole(...STORE_ADMIN_ROLES));
 merchAdminRouter.get('/stores', listStoresAdmin);
 merchAdminRouter.post('/stores', createStoreAdmin);
 merchAdminRouter.put('/stores/:id', updateStoreAdmin);
@@ -31,7 +43,7 @@ merchAdminRouter.post('/inventory/:storeId/replenish', triggerStoreReplenishment
 
 // Cleaner top-level admin router mounted at /api/v1/admin/darkstores (see app.ts).
 export const adminDarkstoreRouter = Router();
-adminDarkstoreRouter.use(authenticateAdmin, requireRole('admin', 'super_admin'));
+adminDarkstoreRouter.use(authenticateAdmin, requireRole(...STORE_ADMIN_ROLES));
 adminDarkstoreRouter.get('/', listStoresAdmin);
 adminDarkstoreRouter.post('/', createStoreAdmin);
 adminDarkstoreRouter.put('/:id', updateStoreAdmin);
