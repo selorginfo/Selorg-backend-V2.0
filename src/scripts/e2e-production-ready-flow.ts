@@ -171,7 +171,7 @@ async function main() {
     assert(cur?.riderStage === 'offered', `riderStage ${cur?.riderStage}`);
     assert(!cur?.pickerId, 'rider must not be assigned before accept');
     assert(cur?.dispatchBay === 'Rack-D1-Slot3', 'dispatchBay missing');
-    assert(!!cur?.offerExpiresAt, 'offerExpiresAt not set');
+    assert(!cur?.offerExpiresAt, 'open-pool offer must not expire into invisibility');
     console.log(`[6] Waiting for Rider — bay ${cur!.dispatchBay}`);
 
     // ── 7. Offline rider blocked ─────────────────────────────────────────────

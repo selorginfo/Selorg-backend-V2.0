@@ -1649,6 +1649,19 @@ export async function adminReassignPickerShift(req: Request, res: Response, next
   } catch (err) { next(err); }
 }
 
+export async function adminListLiveShiftWorkforce(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { listLiveShiftWorkforce } = await import('../rider/pickerOps.bridge');
+    const q = req.query as { warehouseKey?: string; role?: string; status?: string };
+    const result = await listLiveShiftWorkforce({
+      warehouseKey: q.warehouseKey,
+      role: q.role,
+      status: q.status,
+    });
+    res.json(ResponseFormatter.success(result));
+  } catch (err) { next(err); }
+}
+
 export async function adminGetPickerMonthlySalary(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const pickerIdRaw = String(

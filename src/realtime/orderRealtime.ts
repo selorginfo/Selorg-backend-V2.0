@@ -273,6 +273,11 @@ export const orderRealtime = {
   notifyHhdHub(hubKey: string | null | undefined, event: string, payload: OrderEventPayload): void {
     emitToHhd(hubKey, event, payload);
   },
+  /** Push an event to a single HSD operator room (`hhd:{userId}`). */
+  notifyHhdUser(userId: string | null | undefined, event: string, payload: OrderEventPayload): void {
+    if (!hhdIo || !userId) return;
+    hhdIo.to(`hhd:${String(userId)}`).emit(event, publicPayload(event, payload));
+  },
   notifyRiders(hubKey: string | null | undefined, event: string, payload: OrderEventPayload): void {
     emitToRiders(hubKey, event, payload);
   },

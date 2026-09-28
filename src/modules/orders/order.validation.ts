@@ -9,30 +9,58 @@ export const listOrdersQuerySchema = z
   .passthrough();
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;
 
-export const createOrderSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        productId: z.string().trim().min(1),
-        variantId: z.string().trim().optional(),
-        quantity: z.number().int().min(1).optional(),
-      }),
-    )
-    .min(1, 'Items required'),
-  addressId: z.string().trim().min(1, 'Address not found'),
-  paymentMethodId: z.string().trim().optional(),
-  paymentMethodType: z.enum(['card', 'upi', 'cash', 'wallet', 'digital']).optional(),
-  couponCode: z.string().trim().optional(),
-  deliveryTip: z.number().min(0).optional(),
-  deliveryNotes: z.string().trim().optional(),
-  customerName: z.string().trim().optional(),
-  customerEmail: z.string().trim().optional(),
-  customerPhone: z.string().trim().optional(),
-  /** `now` = express; `today:slot-1` / `tomorrow:slot-2` = scheduled. */
-  deliverySlotOptionId: z.string().trim().optional(),
-  deliveryMode: z.enum(['express', 'scheduled']).optional(),
+const orderLineSchema = z.object({
+  productId: z.string().trim().min(1),
+  variantId: z.string().trim().optional(),
+  quantity: z.number().int().min(1).optional(),
 });
+
+/**
+ * Commercial fields (price, coupon amounts, totals) must never be accepted from
+ * the client. Use `checkoutLock` (AES-GCM server token) for coupon / tip / priced
+ * line snapshot. `.strict()` rejects forged price/discount/totalBill keys.
+ */
+export const createOrderSchema = z
+  .object({
+    /** Opaque AES-GCM lock from POST /orders/prepare — preferred path. */
+    checkoutLock: z.string().trim().min(1).optional(),
+    items: z.array(orderLineSchema).optional(),
+    addressId: z.string().trim().min(1, 'Address not found'),
+    paymentMethodId: z.string().trim().optional(),
+    paymentMethodType: z.enum(['card', 'upi', 'cash', 'wallet', 'digital']).optional(),
+    /** Legacy plaintext coupon — ignored when `checkoutLock` is present. */
+    couponCode: z.string().trim().optional(),
+    deliveryTip: z.number().min(0).max(1000).optional(),
+    deliveryNotes: z.string().trim().optional(),
+    customerName: z.string().trim().optional(),
+    customerEmail: z.string().trim().optional(),
+    customerPhone: z.string().trim().optional(),
+    /** `now` = express; `today:slot-1` / `tomorrow:slot-2` = scheduled. */
+    deliverySlotOptionId: z.string().trim().optional(),
+    deliveryMode: z.enum(['express', 'scheduled']).optional(),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (!val.checkoutLock && (!val.items || val.items.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Items required',
+        path: ['items'],
+      });
+    }
+  });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+
+export const prepareCheckoutSchema = z
+  .object({
+    items: z.array(orderLineSchema).min(1, 'Items required'),
+    addressId: z.string().trim().min(1).optional(),
+    paymentMethodType: z.enum(['card', 'upi', 'cash', 'wallet', 'digital']).optional(),
+    couponCode: z.string().trim().optional(),
+    deliveryTip: z.number().min(0).max(1000).optional(),
+  })
+  .strict();
+export type PrepareCheckoutInput = z.infer<typeof prepareCheckoutSchema>;
 
 /** Accept missing/empty body (clients may POST with no JSON). */
 export const cancelOrderSchema = z.preprocess(

@@ -61,24 +61,82 @@ export async function createShift(payload: Record<string, unknown>) {
   const { startTime, endTime } = payload as { startTime: string; endTime: string };
   const startMins = parseTimeToMinutes(startTime);
   const endMins = parseTimeToMinutes(endTime);
-  if (startMins == null || endMins == null || endMins <= startMins) {
+  if (startMins == null || endMins == null) {
     throw Object.assign(new Error('Invalid shift time window'), { code: 'INVALID_TIME_WINDOW' });
   }
-  // Write into Rider App catalogue so Admin + Rider App share the same slots.
-  const { PickerShift } = await import('../picker/picker.models');
+  // Overnight is valid: endMins <= startMins means the shift crosses midnight.
+  const overnight = endMins <= startMins;
+  const durationMinutes = overnight ? endMins + 24 * 60 - startMins : endMins - startMins;
+  if (durationMinutes <= 0) {
+    throw Object.assign(new Error('Invalid shift time window'), { code: 'INVALID_TIME_WINDOW' });
+  }
+
+  const roleRaw = String(payload.appliesTo || payload.workforceRole || payload.role || '').toLowerCase();
+  const workforceRole: 'picker' | 'rider' | undefined =
+    roleRaw.includes('picker') ? 'picker' : roleRaw.includes('rider') ? 'rider' : undefined;
+
+  const hubId = String(payload.hubId || payload.warehouseKey || payload.scope || '').trim();
+  const hubName = String(payload.hubName || payload.darkStoreName || hubId || '').trim();
+  if (!hubId || hubId.toLowerCase() === 'all stores') {
+    throw Object.assign(new Error('Dark Store is required to create a shift'), { code: 'DARK_STORE_REQUIRED', statusCode: 400 });
+  }
+
+  // Keep picker geofence hubs in sync with Dashboard dark stores.
+  const { PickerShift, PickerWorkLocation } = await import('../picker/picker.models');
+  const existingHub = await PickerWorkLocation.findOne({ warehouseKey: hubId }).lean();
+  if (!existingHub) {
+    // Prefer DarkStore catalogue coordinates when available.
+    let lat: number | undefined;
+    let lng: number | undefined;
+    let displayName = hubName || hubId;
+    try {
+      const { DarkStore } = await import('../store/dark-store.model');
+      const or: Record<string, unknown>[] = [{ code: hubId }];
+      if (/^[a-f\d]{24}$/i.test(hubId)) or.push({ _id: hubId });
+      const ds = await DarkStore.findOne({ $or: or }).lean() as {
+        name?: string;
+        location?: { coordinates?: [number, number] };
+      } | null;
+      if (ds) {
+        displayName = ds.name || displayName;
+        const coords = ds.location?.coordinates;
+        if (Array.isArray(coords) && coords.length >= 2) {
+          lng = Number(coords[0]);
+          lat = Number(coords[1]);
+        }
+      }
+    } catch {
+      /* DarkStore optional */
+    }
+    await PickerWorkLocation.create({
+      warehouseKey: hubId,
+      name: displayName,
+      type: 'darkstore',
+      isActive: true,
+      ...(Number.isFinite(lat) && Number.isFinite(lng)
+        ? { coordinates: { latitude: lat, longitude: lng } }
+        : {}),
+      geofenceRadius: 200,
+    });
+  }
+
   const { mapPickerShiftToAdmin } = await import('./pickerOps.bridge');
   const created = await PickerShift.create({
     name: (payload.name as string) || (payload.title as string) || `Shift ${startTime}-${endTime}`,
-    warehouseKey: (payload.hubId as string) || (payload.hubName as string) || (payload.scope as string) || undefined,
+    warehouseKey: hubId,
+    site: hubId,
+    siteId: hubId,
     startTime,
     endTime,
     time: `${startTime} – ${endTime}`,
-    capacity: Number(payload.capacity) || Number(payload.headcountTarget) || 1,
-    breakDuration: Number(payload.breakMinutes) || Number(payload.breakDuration) || 0,
+    capacity: Math.max(1, Number(payload.capacity) || Number(payload.headcountTarget) || 1),
+    breakDuration: Math.max(0, Number(payload.breakMinutes) || Number(payload.breakDuration) || 0),
+    workforceRole,
     status: 'SCHEDULED',
     basePay: Number(payload.basePay) || 0,
     hasIncentive: true,
     isSurge: !!(payload.isPeak || payload.isSurge),
+    locationType: 'darkstore',
   });
   return mapPickerShiftToAdmin(created.toObject() as any, 0);
 }
@@ -191,6 +249,17 @@ export async function updateShift(id: string, updates: Record<string, unknown>) 
       const st = String(updates.startTime || '');
       const et = String(updates.endTime || '');
       if (st && et) patch.time = `${st} – ${et}`;
+    }
+    if (updates.appliesTo != null || updates.workforceRole != null || updates.role != null) {
+      const r = String(updates.appliesTo || updates.workforceRole || updates.role || '').toLowerCase();
+      if (r.includes('picker')) patch.workforceRole = 'picker';
+      else if (r.includes('rider')) patch.workforceRole = 'rider';
+    }
+    if (updates.breakMinutes != null || updates.breakDuration != null || updates.breakTime != null) {
+      patch.breakDuration = Math.max(
+        0,
+        Number(updates.breakMinutes ?? updates.breakDuration ?? parseInt(String(updates.breakTime), 10)) || 0,
+      );
     }
     const updated = await PickerShift.findByIdAndUpdate(id, patch, { new: true }).lean();
     if (updated) return mapPickerShiftToAdmin(updated as any, 0);

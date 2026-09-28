@@ -2,12 +2,13 @@ import { Router } from 'express';
 import { validate } from '../../middleware/validate.middleware';
 import { authenticateCustomer, authenticateAdmin, requireRole } from '../../middleware/auth.middleware';
 import * as orderController from './order.controller';
-import { cancelOrderSchema, createOrderSchema, listOrdersQuerySchema, rateOrderSchema, updateOrderStatusSchema, verifyOrderOtpSchema } from './order.validation';
+import { cancelOrderSchema, createOrderSchema, listOrdersQuerySchema, prepareCheckoutSchema, rateOrderSchema, updateOrderStatusSchema, verifyOrderOtpSchema } from './order.validation';
 
 const router = Router();
 
 router.get('/active', authenticateCustomer, orderController.active);
 router.get('/', authenticateCustomer, validate(listOrdersQuerySchema, 'query'), orderController.list);
+router.post('/prepare', authenticateCustomer, validate(prepareCheckoutSchema), orderController.prepare);
 router.get('/:id', authenticateCustomer, orderController.getDetail);
 router.post('/', authenticateCustomer, validate(createOrderSchema), orderController.create);
 router.post('/:id/cancel', authenticateCustomer, validate(cancelOrderSchema), orderController.cancel);

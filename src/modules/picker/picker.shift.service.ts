@@ -43,6 +43,14 @@ export interface ShiftSlotDto {
   status: ApiShiftStatus;
   hubId: string | null;
   hubName: string | null;
+  breakDuration: number;
+  workforceRole: 'picker' | 'rider' | null;
+  isOvernight: boolean;
+  windowStartAt: string | null;
+  windowEndAt: string | null;
+  canStart: boolean;
+  canStartReason: string | null;
+  assignmentStatus: 'ASSIGNED' | 'STARTED' | 'COMPLETED' | null;
 }
 
 /** `"₹120/hr + incentives"` / `"₹120/hr + surge"` — the `SlotCard` pay line. */
@@ -70,12 +78,55 @@ function minutesOfDay(hhmm?: string | null): number | null {
   return match ? Number(match[1]) * 60 + Number(match[2]) : null;
 }
 
-/** Absolute instant a shift starts, combining its date with `startTime`. */
-function shiftStartAt(shift: { date?: Date | null; startTime?: string | null }): Date | null {
-  const minutes = minutesOfDay(shift.startTime);
-  if (minutes == null) return null;
+/**
+ * Absolute start/end for a shift. Overnight windows (end <= start) put the end
+ * on the following hub-local calendar day — e.g. 18:00 → 04:00.
+ */
+export function shiftWindow(shift: {
+  date?: Date | null;
+  startTime?: string | null;
+  endTime?: string | null;
+}): { start: Date; end: Date; isOvernight: boolean } | null {
+  const startMins = minutesOfDay(shift.startTime);
+  const endMins = minutesOfDay(shift.endTime);
+  if (startMins == null || endMins == null) return null;
   const base = hubDayStart(shift.date ? new Date(shift.date) : new Date());
-  return new Date(base.getTime() + minutes * 60000);
+  const start = new Date(base.getTime() + startMins * 60000);
+  let end = new Date(base.getTime() + endMins * 60000);
+  const isOvernight = endMins <= startMins;
+  if (isOvernight) end = new Date(end.getTime() + 86400000);
+  return { start, end, isOvernight };
+}
+
+/** Absolute instant a shift starts, combining its date with `startTime`. */
+function shiftStartAt(shift: { date?: Date | null; startTime?: string | null; endTime?: string | null }): Date | null {
+  return shiftWindow(shift)?.start ?? null;
+}
+
+function shiftEndAt(shift: { date?: Date | null; startTime?: string | null; endTime?: string | null }): Date | null {
+  return shiftWindow(shift)?.end ?? null;
+}
+
+function canStartShiftNow(
+  shift: { date?: Date | null; startTime?: string | null; endTime?: string | null },
+  assignmentStatus?: string | null,
+  now: Date = new Date(),
+): { ok: boolean; reason: string | null } {
+  if (assignmentStatus === 'STARTED') {
+    return { ok: false, reason: 'Shift already started.' };
+  }
+  if (assignmentStatus === 'COMPLETED') {
+    return { ok: false, reason: 'This shift is already completed.' };
+  }
+  const window = shiftWindow(shift);
+  if (!window) return { ok: true, reason: null };
+  if (now.getTime() < window.start.getTime()) {
+    return { ok: false, reason: 'Start My Shift is available only after the scheduled start time.' };
+  }
+  if (now.getTime() > window.end.getTime()) {
+    return { ok: false, reason: 'This shift has already ended.' };
+  }
+  return { ok: true, reason: null };
 }
 
 function toShiftSlotDto(
@@ -83,8 +134,13 @@ function toShiftSlotDto(
   bookedCount: number,
   booked: boolean,
   hubName: string | null,
+  assignmentStatus: 'ASSIGNED' | 'STARTED' | 'COMPLETED' | null = null,
 ): ShiftSlotDto {
   const capacity = shift.capacity ?? 1;
+  const window = shiftWindow(shift);
+  const startGate = booked
+    ? canStartShiftNow(shift, assignmentStatus)
+    : { ok: false, reason: 'Book this shift before starting.' };
   return {
     id: String(shift._id),
     label: shift.name,
@@ -104,6 +160,14 @@ function toShiftSlotDto(
     status: toApiShiftStatus(shift.status, bookedCount, capacity),
     hubId: shift.warehouseKey || null,
     hubName,
+    breakDuration: Number(shift.breakDuration) || 0,
+    workforceRole: shift.workforceRole === 'picker' || shift.workforceRole === 'rider' ? shift.workforceRole : null,
+    isOvernight: Boolean(window?.isOvernight),
+    windowStartAt: window?.start.toISOString() ?? null,
+    windowEndAt: window?.end.toISOString() ?? null,
+    canStart: Boolean(booked && startGate.ok && assignmentStatus === 'ASSIGNED'),
+    canStartReason: booked ? startGate.reason : 'Book this shift before starting.',
+    assignmentStatus,
   };
 }
 
@@ -123,7 +187,25 @@ async function hubNames(warehouseKeys: string[]): Promise<Map<string, string>> {
   const hubs = (await PickerWorkLocation.find({ warehouseKey: { $in: keys } })
     .select('warehouseKey name')
     .lean()) as Array<{ warehouseKey: string; name: string }>;
-  return new Map(hubs.map((h) => [h.warehouseKey, h.name]));
+  const map = new Map(hubs.map((h) => [h.warehouseKey, h.name]));
+  const missing = keys.filter((k) => !map.has(k));
+  if (missing.length > 0) {
+    try {
+      const { DarkStore } = await import('../store/dark-store.model');
+      const stores = await DarkStore.find({
+        $or: [{ code: { $in: missing } }, { _id: { $in: missing.filter((id) => /^[a-f\d]{24}$/i.test(id)) } }],
+      })
+        .select('code name')
+        .lean() as Array<{ code?: string; name?: string; _id?: unknown }>;
+      for (const s of stores) {
+        if (s.code) map.set(s.code, s.name || s.code);
+        if (s._id) map.set(String(s._id), s.name || s.code || String(s._id));
+      }
+    } catch {
+      /* optional */
+    }
+  }
+  return map;
 }
 
 /** Builds the API 18 DTO for one shift, used by book/unbook to return the patched slot. */
@@ -135,9 +217,19 @@ async function buildSlot(shift: any, pickerId: string): Promise<ShiftSlotDto> {
       userId: new mongoose.Types.ObjectId(pickerId),
       shiftId: shift._id,
       status: { $in: ['ASSIGNED', 'STARTED', 'COMPLETED'] },
-    }).select('_id').lean(),
+    }).select('_id status').lean() as Promise<{ _id: unknown; status?: string } | null>,
   ]);
-  return toShiftSlotDto(shift, counts.get(String(shift._id)) || 0, Boolean(mine), names.get(shift.warehouseKey) || null);
+  const assignmentStatus =
+    mine?.status === 'ASSIGNED' || mine?.status === 'STARTED' || mine?.status === 'COMPLETED'
+      ? mine.status
+      : null;
+  return toShiftSlotDto(
+    shift,
+    counts.get(String(shift._id)) || 0,
+    Boolean(mine),
+    names.get(shift.warehouseKey) || null,
+    assignmentStatus,
+  );
 }
 
 // ─── List available shifts (API 18) ───────────────────────────────────────────
@@ -153,17 +245,26 @@ export async function listAvailableShifts(
   pickerId: string,
   params: { warehouseKey?: string; date?: string; dateFrom?: string; dateTo?: string },
 ): Promise<ShiftSlotDto[]> {
-  const user = (await PickerUser.findById(pickerId).select('currentLocationId').lean()) as any;
+  const user = (await PickerUser.findById(pickerId).select('currentLocationId workforceRole').lean()) as any;
   const warehouseKey = params.warehouseKey || user?.currentLocationId;
+  const role = user?.workforceRole === 'picker' || user?.workforceRole === 'rider' ? user.workforceRole : null;
 
   const query: Record<string, unknown> = { status: { $in: ['SCHEDULED', 'ACTIVE'] } };
   if (warehouseKey) query.warehouseKey = warehouseKey;
+  // Role filter: show matching role + legacy rows with no workforceRole set.
+  if (role) {
+    query.$and = [
+      ...(Array.isArray(query.$and) ? (query.$and as unknown[]) : []),
+      { $or: [{ workforceRole: role }, { workforceRole: null }, { workforceRole: { $exists: false } }] },
+    ];
+  }
 
   const from = parseHubDate(params.dateFrom) || parseHubDate(params.date) || hubDayStart();
   const to = params.dateTo
     ? hubDayEnd(parseHubDate(params.dateTo) as Date)
     : hubDayEnd(parseHubDate(params.date) || from);
-  query.$or = [{ date: { $gte: from, $lte: to } }, { date: null }, { date: { $exists: false } }];
+  const dateClause = { $or: [{ date: { $gte: from, $lte: to } }, { date: null }, { date: { $exists: false } }] };
+  query.$and = [...(Array.isArray(query.$and) ? (query.$and as unknown[]) : []), dateClause];
 
   const shifts = (await PickerShift.find(query).sort({ startTime: 1 }).lean()) as any[];
   if (shifts.length === 0) return [];
@@ -176,24 +277,63 @@ export async function listAvailableShifts(
       shiftId: { $in: shifts.map((s) => s._id) },
       status: { $in: ['ASSIGNED', 'STARTED', 'COMPLETED'] },
     })
-      .select('shiftId')
-      .lean() as Promise<Array<{ shiftId: mongoose.Types.ObjectId }>>,
+      .select('shiftId status')
+      .lean() as Promise<Array<{ shiftId: mongoose.Types.ObjectId; status: string }>>,
   ]);
 
-  const mine = new Set(myAssignments.map((a) => String(a.shiftId)));
-  return shifts.map((shift) =>
-    toShiftSlotDto(shift, counts.get(String(shift._id)) || 0, mine.has(String(shift._id)), names.get(shift.warehouseKey) || null),
-  );
+  const mine = new Map(myAssignments.map((a) => [String(a.shiftId), a.status]));
+  return shifts.map((shift) => {
+    const status = mine.get(String(shift._id));
+    const assignmentStatus =
+      status === 'ASSIGNED' || status === 'STARTED' || status === 'COMPLETED' ? status : null;
+    return toShiftSlotDto(
+      shift,
+      counts.get(String(shift._id)) || 0,
+      Boolean(status),
+      names.get(shift.warehouseKey) || null,
+      assignmentStatus,
+    );
+  });
 }
 
 export async function getMyShifts(pickerId: string) {
-  return PickerShiftAssignment.find({
+  const assignments = await PickerShiftAssignment.find({
     userId: new mongoose.Types.ObjectId(pickerId),
     status: { $in: ['ASSIGNED', 'STARTED'] },
   })
     .populate('shiftId')
     .sort({ date: 1 })
     .lean();
+
+  const shiftDocs = assignments
+    .map((a: any) => a.shiftId)
+    .filter(Boolean);
+  const [counts, names] = await Promise.all([
+    countBookings(shiftDocs.map((s: any) => s._id)),
+    hubNames(shiftDocs.map((s: any) => s.warehouseKey)),
+  ]);
+
+  return assignments.map((a: any) => {
+    const shift = a.shiftId;
+    if (!shift) return a;
+    const slot = toShiftSlotDto(
+      shift,
+      counts.get(String(shift._id)) || 0,
+      true,
+      names.get(shift.warehouseKey) || null,
+      a.status,
+    );
+    return {
+      ...slot,
+      assignmentId: String(a._id),
+      shiftId: String(shift._id),
+      startedAt: a.startedAt ? new Date(a.startedAt).toISOString() : null,
+      completedAt: a.completedAt ? new Date(a.completedAt).toISOString() : null,
+      assignmentDate: a.date,
+      warehouseKey: a.warehouseKey || shift.warehouseKey || null,
+      shift: slot,
+    };
+  });
 }
 
 // ─── Book (API 19) ────────────────────────────────────────────────────────────
@@ -210,7 +350,7 @@ export async function getMyShifts(pickerId: string) {
 export async function selectShift(pickerId: string, shiftId: string): Promise<{ assignmentId: string; shift: ShiftSlotDto }> {
   const userId = new mongoose.Types.ObjectId(pickerId);
 
-  const user = (await PickerUser.findById(pickerId).select('status').lean()) as any;
+  const user = (await PickerUser.findById(pickerId).select('status currentLocationId workforceRole').lean()) as any;
   if (!user) throw AppError.notFound('Picker');
   if (String(user.status).toUpperCase() !== 'ACTIVE') {
     throw new AppError('Complete your onboarding before booking shifts.', 403, 'ONBOARDING_INCOMPLETE');
@@ -224,8 +364,23 @@ export async function selectShift(pickerId: string, shiftId: string): Promise<{ 
     throw AppError.conflict('This slot is no longer open for booking.', 'SHIFT_CLOSED');
   }
 
-  const startAt = shiftStartAt(shift);
-  if (startAt && startAt.getTime() <= Date.now()) {
+  // Dark store / hub binding: picker may only book shifts for their assigned hub.
+  if (shift.warehouseKey && user.currentLocationId && String(shift.warehouseKey) !== String(user.currentLocationId)) {
+    throw new AppError(
+      'This shift belongs to a different Dark Store than the one assigned to your account.',
+      403,
+      'WRONG_DARK_STORE',
+    );
+  }
+
+  // Role filter: picker cannot book rider-only shifts and vice versa.
+  const userRole = user.workforceRole === 'picker' || user.workforceRole === 'rider' ? user.workforceRole : null;
+  if (shift.workforceRole && userRole && shift.workforceRole !== userRole) {
+    throw new AppError('This shift is not available for your role.', 403, 'WRONG_ROLE');
+  }
+
+  const window = shiftWindow(shift);
+  if (window && window.start.getTime() <= Date.now()) {
     throw AppError.conflict('This slot has already started.', 'SHIFT_CLOSED');
   }
 
@@ -233,14 +388,23 @@ export async function selectShift(pickerId: string, shiftId: string): Promise<{ 
     userId, shiftId: shift._id, status: { $in: ['ASSIGNED', 'STARTED', 'COMPLETED'] },
   });
   if (existing) {
-    // Idempotent: the app treats a double-tap as success.
-    return { assignmentId: String(existing._id), shift: await buildSlot(shift.toObject(), pickerId) };
+    throw AppError.conflict('You have already booked this shift.', 'SHIFT_ALREADY_BOOKED');
   }
 
   const shiftDate = shift.date ? new Date(shift.date) : hubDayStart();
   await assertNoOverlap(pickerId, shift, shiftDate);
 
   const capacity = shift.capacity ?? 1;
+  const preCount = await PickerShiftAssignment.countDocuments({
+    shiftId: shift._id, status: { $in: ['ASSIGNED', 'STARTED', 'COMPLETED'] },
+  });
+  if (preCount >= capacity) {
+    throw AppError.conflict(
+      'This shift is already fully booked. Please select another available shift.',
+      'SHIFT_FULL',
+    );
+  }
+
   const assignment = await PickerShiftAssignment.create({
     userId,
     shiftId: shift._id,
@@ -254,22 +418,27 @@ export async function selectShift(pickerId: string, shiftId: string): Promise<{ 
   });
   if (booked > capacity) {
     await PickerShiftAssignment.deleteOne({ _id: assignment._id });
-    throw AppError.conflict('This slot just filled up.', 'SHIFT_FULL');
+    throw AppError.conflict(
+      'This shift is already fully booked. Please select another available shift.',
+      'SHIFT_FULL',
+    );
   }
 
   return { assignmentId: String(assignment._id), shift: await buildSlot(shift.toObject(), pickerId) };
 }
 
-/** Refuses a booking whose hours overlap one the rider already holds that day. */
+/** Refuses a booking whose hours overlap one the rider already holds that day (overnight-aware). */
 async function assertNoOverlap(pickerId: string, shift: any, shiftDate: Date): Promise<void> {
-  const start = minutesOfDay(shift.startTime);
-  const end = minutesOfDay(shift.endTime);
-  if (start == null || end == null) return;
+  const window = shiftWindow({ ...shift, date: shiftDate });
+  if (!window) return;
+
+  const lookbackStart = new Date(hubDayStart(shiftDate).getTime() - 86400000);
+  const lookaheadEnd = new Date(hubDayEnd(shiftDate).getTime() + 86400000);
 
   const sameDay = (await PickerShiftAssignment.find({
     userId: new mongoose.Types.ObjectId(pickerId),
     status: { $in: ['ASSIGNED', 'STARTED'] },
-    date: { $gte: hubDayStart(shiftDate), $lte: hubDayEnd(shiftDate) },
+    date: { $gte: lookbackStart, $lte: lookaheadEnd },
   })
     .populate('shiftId')
     .lean()) as any[];
@@ -277,10 +446,12 @@ async function assertNoOverlap(pickerId: string, shift: any, shiftDate: Date): P
   for (const assignment of sameDay) {
     const other = assignment.shiftId;
     if (!other || String(other._id) === String(shift._id)) continue;
-    const otherStart = minutesOfDay(other.startTime);
-    const otherEnd = minutesOfDay(other.endTime);
-    if (otherStart == null || otherEnd == null) continue;
-    if (start < otherEnd && otherStart < end) {
+    const otherWindow = shiftWindow({
+      ...other,
+      date: assignment.date || other.date || shiftDate,
+    });
+    if (!otherWindow) continue;
+    if (window.start < otherWindow.end && otherWindow.start < window.end) {
       throw new AppError(
         `This slot overlaps your booked ${other.name} shift.`,
         409,
@@ -389,6 +560,13 @@ export async function startShift(
   }
 
   const shift = assignment.shiftId as any;
+
+  // Enforce scheduled start/end window (overnight-aware).
+  const startGate = canStartShiftNow(shift, assignment.status);
+  if (!startGate.ok) {
+    throw AppError.conflict(startGate.reason || 'Cannot start this shift yet.', 'SHIFT_NOT_STARTABLE');
+  }
+
   await assertWithinGeofence(shift?.warehouseKey || user.currentLocationId, location);
 
   const startedAt = new Date();

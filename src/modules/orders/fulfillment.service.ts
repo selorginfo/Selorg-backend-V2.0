@@ -487,6 +487,9 @@ export async function completeHandover(input: {
   /** Rack / bay code shown to riders (e.g. Rack-D1-Slot3). Persisted on CustomerOrder.dispatchBay. */
   dispatchBay?: string | null;
   rackCode?: string | null;
+  /** Soft-reserved rider from picker accept (HHD targetRiderId). */
+  reservedRiderId?: string | null;
+  reservedRiderName?: string | null;
 }): Promise<{ orderNumber: string; customerOrderId: string; dispatchBay: string | null }> {
   const customer = await findCustomerOrderByHhdOrderId(input.hhdOrderId);
   if (!customer) {
@@ -526,9 +529,9 @@ export async function completeHandover(input: {
   const dispatchBay =
     String(input.dispatchBay || input.rackCode || customer.dispatchBay || '').trim() || null;
 
-  const { pickerConfig } = await import('../picker/picker.config');
-  const offerExpiresAt = new Date(now.getTime() + pickerConfig.offerExpirySeconds * 1000);
-
+  // Open-pool hub offers must not expire into invisibility. `offerExpiresAt: null`
+  // keeps the order in every online rider's Live Orders feed until someone accepts
+  // (admin exclusive offers may still set a window via dispatch/admin reassign).
   let claimed: IOrder;
   try {
     claimed = await applyFulfillmentTransition({
@@ -549,7 +552,7 @@ export async function completeHandover(input: {
         ...(dispatchBay ? { dispatchBay } : {}),
         offerHubKey: input.hub || customer.offerHubKey || DEFAULT_HUB_KEY,
         deliveryOtp: customer.deliveryOtp || generateDeliveryOtp(),
-        offerExpiresAt,
+        offerExpiresAt: null,
         ...(input.deviceId ? { hsdDeviceId: input.deviceId } : {}),
       },
     });
@@ -575,6 +578,17 @@ export async function completeHandover(input: {
     hubInput: input.hub || null,
     scannedBy: input.scannedBy,
   });
+
+  // Soft-reserved rider (from picker accept) is display/ops metadata only.
+  // Do NOT call dispatch.assignOrder here — that sets a timed offerExpiresAt and
+  // would shrink the intentional open hub pool (offerExpiresAt: null above).
+  // Rider claim stays first-accept-wins on pickerId: null + riderStage: offered.
+  if (input.reservedRiderName) {
+    await Order.updateOne(
+      { _id: claimed._id },
+      { $set: { 'adminFulfillment.riderName': String(input.reservedRiderName).trim() } },
+    ).catch(() => undefined);
+  }
 
   await HHDAssignOrder.findOneAndUpdate(
     { orderId: input.hhdOrderId },
@@ -796,6 +810,40 @@ async function notifyHubRiders(order: IOrder, title: string, body: string): Prom
   );
 }
 
+/**
+ * Re-broadcast an order that was returned to the hub pool (rider cancel / admin).
+ * Emits the same socket event as rack handover so Live Orders refreshes.
+ */
+export async function reofferOrderToHub(
+  order: IOrder,
+  opts?: { title?: string; body?: string },
+): Promise<void> {
+  const hubKey = order.offerHubKey || DEFAULT_HUB_KEY;
+  const dispatchBay = order.dispatchBay || null;
+  const eventPayload = {
+    orderId: String(order._id),
+    orderNumber: order.orderNumber,
+    userId: String(order.userId),
+    bagCode: order.bagCode || null,
+    hubKey,
+    offerHubKey: hubKey,
+    dispatchBay,
+    rackCode: dispatchBay,
+    status: order.status,
+    fulfillmentStage: order.fulfillmentStage,
+    riderStage: order.riderStage || 'offered',
+  };
+  eventBus.emit(EVENT_TYPES.ORDER_HANDED_OVER, eventPayload);
+  await notifyHubRiders(
+    order,
+    opts?.title || 'Delivery available again',
+    opts?.body ||
+      (dispatchBay
+        ? `Order ${order.orderNumber} ready at ${dispatchBay}`
+        : `Order ${order.orderNumber} is waiting for a rider`),
+  );
+}
+
 function customerNotificationCopy(
   status: string,
   orderNumber: string,
@@ -847,9 +895,17 @@ export async function attachTrackingDetails(
   formatted.offerHubKey = order.offerHubKey || null;
   formatted.dispatchBay = order.dispatchBay || null;
 
-  const pickerId = order.pickerId ? String(order.pickerId) : '';
-  if (pickerId && mongoose.isValidObjectId(pickerId)) {
-    const rider = (await PickerUser.findById(pickerId)
+  const pickerIdRaw = order.pickerId ? String(order.pickerId) : '';
+  const riderIdRaw = order.riderId ? String(order.riderId) : '';
+  const partnerId =
+    pickerIdRaw && mongoose.isValidObjectId(pickerIdRaw)
+      ? pickerIdRaw
+      : riderIdRaw && mongoose.isValidObjectId(riderIdRaw)
+        ? riderIdRaw
+        : '';
+
+  if (partnerId) {
+    const rider = (await PickerUser.findById(partnerId)
       .select('name phone phoneIsPlaceholder photoUri ratingSum ratingCount vehicleType')
       .lean()) as {
       name?: string;
@@ -863,18 +919,26 @@ export async function attachTrackingDetails(
 
     if (rider) {
       const ratingCount = Number(rider.ratingCount) || 0;
+      const name = rider.name || 'Delivery partner';
+      const vehicleType = rider.vehicleType || null;
       formatted.deliveryPartner = {
-        id: pickerId,
-        name: rider.name || 'Delivery partner',
+        id: partnerId,
+        name,
         phone: rider.phoneIsPlaceholder ? null : rider.phone || null,
         photoUri: rider.photoUri || null,
-        vehicleType: rider.vehicleType || null,
+        vehicleType,
+        /** Alias for customer web/apps that expect `vehicle`. */
+        vehicle: vehicleType,
         rating: ratingCount > 0 ? Math.round((Number(rider.ratingSum || 0) / ratingCount) * 10) / 10 : null,
+        initial: name.charAt(0).toUpperCase(),
       };
     }
 
     const ping = await PickerLocationPing.findOne({
-      $or: [{ orderId: order._id }, { pickerId: new mongoose.Types.ObjectId(pickerId) }],
+      $or: [
+        { orderId: order._id },
+        { pickerId: new mongoose.Types.ObjectId(partnerId) },
+      ],
     })
       .sort({ recordedAt: -1 })
       .lean();
@@ -885,6 +949,7 @@ export async function attachTrackingDetails(
         accuracy: ping.accuracy ?? null,
         heading: ping.heading ?? null,
         recordedAt: ping.recordedAt,
+        updatedAt: ping.recordedAt,
       };
     }
   }
@@ -947,6 +1012,10 @@ export async function broadcastRiderGps(
 }
 
 export async function notifyRiderAccepted(order: IOrder): Promise<void> {
+  const enriched = await attachTrackingDetails(
+    order as unknown as Record<string, unknown>,
+    {},
+  );
   eventBus.emit(EVENT_TYPES.ORDER_RIDER_ACCEPTED, {
     orderId: String(order._id),
     orderNumber: order.orderNumber,
@@ -957,6 +1026,7 @@ export async function notifyRiderAccepted(order: IOrder): Promise<void> {
     dispatchBay: order.dispatchBay || null,
     status: order.status,
     riderStage: order.riderStage,
+    deliveryPartner: enriched.deliveryPartner || null,
   });
   fireAndForget('notify-rider-accepted', () =>
     notifyCustomerOrderLifecycle(order, 'accepted', { actor: 'rider' }),

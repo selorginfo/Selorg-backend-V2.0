@@ -206,6 +206,25 @@ export function formatAddressLine(address?: {
     .join(', ');
 }
 
+/**
+ * Coarse drop area for unclaimed offers — city + pincode (and optional area hint).
+ * Full line1/line2 stay hidden until a rider accepts (PII).
+ */
+export function formatCoarseAddress(address?: {
+  line1?: string; line2?: string; city?: string; state?: string; pincode?: string; landmark?: string;
+} | null): string {
+  if (!address) return '';
+  const city = String(address.city || '').trim();
+  const pin = String(address.pincode || '').trim();
+  const landmark = String(address.landmark || '').trim();
+  const parts = [landmark || null, city || null, pin || null].filter(Boolean);
+  if (parts.length) return parts.join(', ');
+  // Legacy rows with only line1 — show a truncated neighbourhood hint, not the full door address.
+  const line1 = String(address.line1 || '').trim();
+  if (!line1) return '';
+  return line1.length > 24 ? `${line1.slice(0, 24)}…` : line1;
+}
+
 /** `"#SG-2048"` / `"2048"` from an order number of any shape. */
 export function orderDisplayNumbers(orderNumber?: string | null, fallbackId?: string): { num: string; raw: string } {
   const source = String(orderNumber || '').trim() || String(fallbackId || '');

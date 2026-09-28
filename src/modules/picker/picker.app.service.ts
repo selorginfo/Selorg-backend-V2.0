@@ -563,7 +563,14 @@ export async function listAvailableShiftCards(pickerId: string, query: { warehou
   return slots.map((s) => ({
     ...s,
     title: `${s.label} · ${s.timeDisplay}`,
-    sub: `${s.remainingSlots} slot${s.remainingSlots === 1 ? '' : 's'} open`,
+    sub: s.booked
+      ? s.assignmentStatus === 'STARTED'
+        ? 'On shift'
+        : `${s.bookedCount} / ${s.capacity} slots booked · Booked by you`
+      : s.status === 'full'
+        ? `Shift Full · ${s.bookedCount} / ${s.capacity} slots booked`
+        : `${s.bookedCount} / ${s.capacity} slots booked · ${s.remainingSlots} open`,
+    breakLabel: s.breakDuration > 0 ? `${s.breakDuration} min break` : 'No break',
     isBookedByMe: Boolean(s.booked),
   }));
 }
@@ -936,6 +943,40 @@ export async function getShiftReadiness(
   if (!assignment) blockers.push('You have no shift scheduled today.');
   if (!coords) blockers.push('Location is required to start a shift.');
 
+  const shift = (assignment as any)?.shiftId;
+  let canStart = false;
+  let canStartReason: string | null = null;
+  let windowStartAt: string | null = null;
+  let windowEndAt: string | null = null;
+  if (assignment && shift) {
+    const { shiftWindow } = await import('./picker.shift.service');
+    const window = shiftWindow({
+      ...(typeof shift.toObject === 'function' ? shift.toObject() : shift),
+      date: (assignment as any).date || shift.date,
+    });
+    if (window) {
+      windowStartAt = window.start.toISOString();
+      windowEndAt = window.end.toISOString();
+      const now = Date.now();
+      if ((assignment as any).status === 'STARTED') {
+        canStart = false;
+        canStartReason = 'Shift already started.';
+      } else if (now < window.start.getTime()) {
+        canStart = false;
+        canStartReason = 'Start My Shift is available only after the scheduled start time.';
+        blockers.push(canStartReason);
+      } else if (now > window.end.getTime()) {
+        canStart = false;
+        canStartReason = 'This shift has already ended.';
+        blockers.push(canStartReason);
+      } else {
+        canStart = (assignment as any).status === 'ASSIGNED';
+      }
+    } else {
+      canStart = (assignment as any).status === 'ASSIGNED';
+    }
+  }
+
   let distanceM: number | null = null;
   let onSite = false;
   if (coords && hub && hasCoords(hub.coordinates?.latitude, hub.coordinates?.longitude)) {
@@ -951,7 +992,7 @@ export async function getShiftReadiness(
   }
 
   return {
-    ready: blockers.length === 0 && onSite,
+    ready: blockers.length === 0 && onSite && canStart,
     accuracyM: accuracyM ?? 0,
     onSite,
     distanceM,
@@ -960,20 +1001,53 @@ export async function getShiftReadiness(
     hubLatitude: hub?.coordinates?.latitude ?? null,
     hubLongitude: hub?.coordinates?.longitude ?? null,
     blockers,
+    canStart,
+    canStartReason,
+    windowStartAt,
+    windowEndAt,
+    assignmentStatus: (assignment as any)?.status || null,
+    shiftId: shift ? String(shift._id || shift) : null,
+    shiftName: shift?.name || null,
+    timeDisplay: shift ? timeRangeDisplay(shift.startTime, shift.endTime, shift.time) : null,
   };
 }
 
 export async function resolveTodaysAssignment(pickerId: string) {
   const from = hubDayStart();
   const to = hubDayEnd();
-  return PickerShiftAssignment.findOne({
+  const yesterdayStart = new Date(from.getTime() - 86400000);
+
+  // Prefer an already-started assignment, then today's booking, then an overnight
+  // booking from yesterday whose window still covers "now".
+  const candidates = await PickerShiftAssignment.find({
     userId: oid(pickerId),
     status: { $in: ['STARTED', 'ASSIGNED'] },
-    $or: [{ date: { $gte: from, $lte: to } }, { date: null }],
+    $or: [
+      { date: { $gte: from, $lte: to } },
+      { date: { $gte: yesterdayStart, $lt: from } },
+      { date: null },
+    ],
   })
-    .sort({ status: -1 })
+    .sort({ status: -1, date: -1 })
     .populate('shiftId')
     .exec();
+
+  const now = Date.now();
+  for (const assignment of candidates) {
+    if ((assignment as any).status === 'STARTED') return assignment;
+  }
+  for (const assignment of candidates) {
+    const shift = (assignment as any).shiftId;
+    if (!shift) continue;
+    const { shiftWindow } = await import('./picker.shift.service');
+    const window = shiftWindow({
+      ...((typeof shift.toObject === 'function' ? shift.toObject() : shift) as object),
+      date: (assignment as any).date || shift.date,
+    } as any);
+    if (!window) return assignment;
+    if (now <= window.end.getTime()) return assignment;
+  }
+  return candidates[0] || null;
 }
 
 async function ensureAttendanceOnStart(pickerId: string, shiftId: string, location?: { latitude: number; longitude: number }) {

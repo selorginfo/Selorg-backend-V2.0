@@ -165,6 +165,8 @@ export interface IHHDOrder extends Document {
   targetRackCode?: string;
   targetRiderName?: string;
   targetRiderId?: string;
+  /** Bumped on timeout release to invalidate concurrent complete/rack races. */
+  assignmentGeneration?: number;
   startedAt?: Date;
   completedAt?: Date;
   createdAt: Date;
@@ -205,6 +207,7 @@ const HHDOrderSchema = new Schema<IHHDOrder>(
     targetRackCode: { type: String },
     targetRiderName: { type: String },
     targetRiderId: { type: String },
+    assignmentGeneration: { type: Number, default: 0 },
     startedAt: { type: Date },
     completedAt: { type: Date },
   },
@@ -214,6 +217,7 @@ const HHDOrderSchema = new Schema<IHHDOrder>(
 HHDOrderSchema.index({ userId: 1, status: 1 });
 HHDOrderSchema.index({ status: 1, createdAt: -1 });
 HHDOrderSchema.index({ hubKey: 1, status: 1, userId: 1 });
+HHDOrderSchema.index({ status: 1, assignedAt: 1, userId: 1 });
 
 export const HHDOrder =
   (mongoose.models.HHDOrder as mongoose.Model<IHHDOrder>) ||

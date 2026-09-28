@@ -113,6 +113,19 @@ export async function scanRack(req: Request, res: Response, next: NextFunction):
           throw new AppError('Order belongs to another operator', 403, 'ACCESS_DENIED');
         }
 
+        // Reject if this assignment was released by the 20-minute timeout job.
+        const { HHD_PICKER_ASSIGNMENT_TIMEOUT_MS } = await import('./hhd.assignment-config');
+        if (
+          order.assignedAt &&
+          Date.now() - new Date(order.assignedAt).getTime() > HHD_PICKER_ASSIGNMENT_TIMEOUT_MS
+        ) {
+          throw new AppError(
+            'This assignment expired. The order was released for another picker.',
+            409,
+            'ASSIGNMENT_EXPIRED',
+          );
+        }
+
         if (order.bagId) {
           const verifiedPhoto = await HHDPhoto.findOne({
             orderId,
@@ -225,6 +238,8 @@ export async function scanRack(req: Request, res: Response, next: NextFunction):
           packageId: order.bagId || orderId,
           dispatchBay: parsedRackCode,
           rackCode: parsedRackCode,
+          reservedRiderId: order.targetRiderId || order.riderId || riderId || null,
+          reservedRiderName: order.targetRiderName || order.riderName || riderName || null,
         });
 
         await HHDScannedItem.create({

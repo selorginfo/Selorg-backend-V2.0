@@ -3,7 +3,7 @@ import { AppError } from '../../utils/AppError';
 import { ResponseFormatter } from '../../utils/response';
 import * as ordersService from './orders.service';
 import { Order } from './order.model';
-import type { CreateOrderInput, RateOrderInput, VerifyOrderOtpInput, UpdateOrderStatusInput } from './order.validation';
+import type { CreateOrderInput, PrepareCheckoutInput, RateOrderInput, VerifyOrderOtpInput, UpdateOrderStatusInput } from './order.validation';
 import {
   persistCustomerOrderIdempotency,
   readCustomerIdempotencyKey,
@@ -66,6 +66,21 @@ export async function create(req: Request, res: Response, next: NextFunction): P
       await persistCustomerOrderIdempotency(userId, idempotencyKey, order, 201);
     }
     res.status(201).json(ResponseFormatter.success(order));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function prepare(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = requireCustomerId(req);
+    const result = await ordersService.prepareCheckout(userId, req.body as PrepareCheckoutInput);
+    const err = errorOf(result);
+    if (err) {
+      res.status(400).json(ResponseFormatter.error(err, 400));
+      return;
+    }
+    res.status(200).json(ResponseFormatter.success(result));
   } catch (err) {
     next(err);
   }

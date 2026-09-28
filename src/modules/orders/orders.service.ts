@@ -22,6 +22,7 @@ import { adminLabelForStage, deriveFulfillmentStage } from './order-lifecycle';
 import { getOrCreateWallet, debitWalletForOrder, refundWalletForFailedOrderPayment, roundInr } from '../wallet/wallet.service';
 import { logger } from '../../utils/logger';
 import * as fulfillment from './fulfillment.service';
+import { issueCheckoutLock, verifyCheckoutLock, type CheckoutLockItem } from './checkout-lock';
 
 export { canCustomerCancel };
 
@@ -315,7 +316,12 @@ export async function getOrderById(userId: string, orderId: string) {
     .sort({ createdAt: -1 })
     .lean();
 
-  return formatOrderForApp({ ...order, _worldlinePayment: worldlinePayment || null } as unknown as Record<string, unknown>);
+  const formatted = formatOrderForApp({
+    ...order,
+    _worldlinePayment: worldlinePayment || null,
+  } as unknown as Record<string, unknown>);
+  // Attach rider profile as soon as the rider has accepted (pickerId/riderId set).
+  return fulfillment.attachTrackingDetails(order as unknown as Record<string, unknown>, formatted);
 }
 
 /**
@@ -514,7 +520,8 @@ async function reconcileWorldlinePaymentsForOrderList(userId: string, ordersLean
 }
 
 interface CreateOrderBody {
-  items: Array<{ productId: string; variantId?: string; quantity?: number }>;
+  checkoutLock?: string;
+  items?: Array<{ productId: string; variantId?: string; quantity?: number }>;
   addressId: string;
   paymentMethodId?: string;
   paymentMethodType?: string;
@@ -528,9 +535,177 @@ interface CreateOrderBody {
   deliveryMode?: 'express' | 'scheduled';
 }
 
-export async function createOrder(userId: string, body: CreateOrderBody): Promise<Record<string, unknown> | { error: string }> {
-  const { items, addressId, paymentMethodId, paymentMethodType, couponCode, deliveryTip } = body || {};
+interface PrepareCheckoutBody {
+  items: Array<{ productId: string; variantId?: string; quantity?: number }>;
+  addressId?: string;
+  paymentMethodType?: string;
+  couponCode?: string;
+  deliveryTip?: number;
+}
+
+async function buildPricedLines(
+  items: Array<{ productId: string; variantId?: string; quantity?: number }>,
+): Promise<
+  | { error: string }
+  | {
+      orderItems: Array<Record<string, unknown>>;
+      itemTotal: number;
+      totalTax: number;
+    }
+> {
+  let itemTotal = 0;
+  let totalTax = 0;
+  const orderItems: Array<Record<string, unknown>> = [];
+  for (const line of items) {
+    const product = await Product.findById(line.productId).lean();
+    if (!product) return { error: `Product not found: ${line.productId}` };
+    let price = product.price;
+    let variantSize = '';
+    if (product.variants && product.variants.length) {
+      const v =
+        product.variants.find((x) => String((x as { _id?: unknown })._id) === String(line.variantId)) ||
+        product.variants[0];
+      price = v.price ?? product.price;
+      variantSize = v.size || '';
+    }
+    const qty = Math.max(1, line.quantity || 1);
+    const stockCheck = await assertStockAllowsAsync(product as never, qty, 0, 'set');
+    if (stockCheck.error) return { error: `${product.name || 'Product'}: ${stockCheck.error}` };
+
+    const lineTotal = price * qty;
+    const gstRate = product.gstRate || 0;
+    const taxAmount = lineTotal * (gstRate / (100 + gstRate));
+    itemTotal += lineTotal;
+    totalTax += taxAmount;
+
+    orderItems.push({
+      productId: product._id,
+      productName: product.name,
+      variantId: line.variantId || '',
+      variantSize,
+      quantity: qty,
+      price,
+      originalPrice: product.originalPrice,
+      hsnCode: product.hsnCode || '',
+      gstRate,
+      taxAmount,
+      image: (product.images && product.images[0]) || '',
+    });
+  }
+  return { orderItems, itemTotal, totalTax };
+}
+
+/**
+ * Issues an AES-GCM checkout lock so the webapp never places an order with
+ * editable price / coupon / tip fields in the clear.
+ */
+export async function prepareCheckout(
+  userId: string,
+  body: PrepareCheckoutBody,
+): Promise<Record<string, unknown> | { error: string }> {
+  const items = body?.items;
   if (!items || !Array.isArray(items) || items.length === 0) return { error: 'Items required' };
+
+  const priced = await buildPricedLines(items);
+  if ('error' in priced) return priced;
+
+  let zone: string | null = null;
+  if (body.addressId) {
+    const address = await CustomerAddress.findOne({ _id: body.addressId, userId }).lean();
+    if (!address) return { error: 'Address not found' };
+    zone = address.city || null;
+  }
+
+  const paymentMethodType = body.paymentMethodType || 'cash';
+  const deliveryTip = Math.min(1000, Math.max(0, Number(body.deliveryTip) || 0));
+  const couponCode = body.couponCode ? String(body.couponCode).trim().toUpperCase() : '';
+
+  let engineResult: Awaited<ReturnType<typeof calculatePricing>>;
+  try {
+    engineResult = await calculatePricing({
+      userId,
+      cartItems: priced.orderItems.map((it) => ({
+        productId: String(it.productId),
+        variantId: (it.variantId as string) || null,
+        quantity: it.quantity as number,
+        baseUnitPrice: it.price as number,
+      })),
+      couponCode: couponCode || null,
+      zone,
+      paymentMethod: paymentMethodType,
+      mode: 'order',
+    });
+  } catch {
+    return { error: 'Unable to calculate order pricing. Please try again.' };
+  }
+
+  if (!engineResult?.totals) {
+    return { error: 'Unable to calculate order pricing. Please try again.' };
+  }
+
+  const safeTotals = engineResult.totals;
+  const discount = Number(safeTotals.discount) || 0;
+  const deliveryFee = Number(safeTotals.deliveryFee) || 0;
+  const handlingCharge = Number(safeTotals.handlingCharge) || 0;
+  const totalBill = (Number(safeTotals.finalAmount) || 0) + deliveryTip;
+
+  const lockItems: CheckoutLockItem[] = items.map((line) => ({
+    productId: String(line.productId),
+    variantId: line.variantId ? String(line.variantId) : undefined,
+    quantity: Math.max(1, line.quantity || 1),
+  }));
+
+  const checkoutLock = issueCheckoutLock({
+    userId,
+    items: lockItems,
+    couponCode: couponCode || null,
+    deliveryTip,
+    paymentMethodType,
+    itemTotal: priced.itemTotal,
+    discount,
+    deliveryFee,
+    handlingCharge,
+    totalBill,
+  });
+
+  return {
+    checkoutLock,
+    expiresInSec: 15 * 60,
+    preview: {
+      itemTotal: priced.itemTotal,
+      discount,
+      deliveryFee,
+      handlingCharge,
+      deliveryTip,
+      totalBill,
+      couponCode: couponCode || null,
+      paymentMethodType,
+      items: lockItems,
+    },
+  };
+}
+
+export async function createOrder(userId: string, body: CreateOrderBody): Promise<Record<string, unknown> | { error: string }> {
+  let items = body?.items;
+  let paymentMethodId = body?.paymentMethodId;
+  let paymentMethodType = body?.paymentMethodType;
+  let couponCode = body?.couponCode;
+  let deliveryTip = body?.deliveryTip;
+  const addressId = body?.addressId;
+
+  // Prefer encrypted checkout lock — client cannot edit price / coupon / tip.
+  if (body?.checkoutLock) {
+    const verified = verifyCheckoutLock(body.checkoutLock, userId);
+    if (!verified.ok) return { error: verified.error };
+    const lock = verified.payload;
+    items = lock.items;
+    couponCode = lock.couponCode || undefined;
+    deliveryTip = lock.deliveryTip;
+    paymentMethodType = lock.paymentMethodType as CreateOrderBody['paymentMethodType'];
+  }
+
+  if (!items || !Array.isArray(items) || items.length === 0) return { error: 'Items required' };
+  deliveryTip = Math.min(1000, Math.max(0, Number(deliveryTip) || 0));
 
   const address = await CustomerAddress.findOne({ _id: addressId, userId }).lean();
   if (!address) return { error: 'Address not found' };
@@ -577,43 +752,9 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     }
   }
 
-  let itemTotal = 0;
-  let totalTax = 0;
-  const orderItems: Array<Record<string, unknown>> = [];
-  for (const line of items) {
-    const product = await Product.findById(line.productId).lean();
-    if (!product) return { error: `Product not found: ${line.productId}` };
-    let price = product.price;
-    let variantSize = '';
-    if (product.variants && product.variants.length) {
-      const v = product.variants.find((x) => String((x as { _id?: unknown })._id) === String(line.variantId)) || product.variants[0];
-      price = v.price ?? product.price;
-      variantSize = v.size || '';
-    }
-    const qty = Math.max(1, line.quantity || 1);
-    const stockCheck = await assertStockAllowsAsync(product as never, qty, 0, 'set');
-    if (stockCheck.error) return { error: `${product.name || 'Product'}: ${stockCheck.error}` };
-
-    const lineTotal = price * qty;
-    const gstRate = product.gstRate || 0;
-    const taxAmount = lineTotal * (gstRate / (100 + gstRate));
-    itemTotal += lineTotal;
-    totalTax += taxAmount;
-
-    orderItems.push({
-      productId: product._id,
-      productName: product.name,
-      variantId: line.variantId || '',
-      variantSize,
-      quantity: qty,
-      price,
-      originalPrice: product.originalPrice,
-      hsnCode: product.hsnCode || '',
-      gstRate,
-      taxAmount,
-      image: (product.images && product.images[0]) || '',
-    });
-  }
+  const priced = await buildPricedLines(items);
+  if ('error' in priced) return priced;
+  const { orderItems, itemTotal, totalTax } = priced;
 
   let deliveryFee = 0;
   let handlingCharge = 0;
@@ -635,10 +776,13 @@ export async function createOrder(userId: string, body: CreateOrderBody): Promis
     });
     compareWithLegacy({ itemTotal, totalBill }, engineResult?.totals || {});
   } catch {
-    // Pricing-engine shadow execution is non-blocking, same as legacy.
+    return { error: 'Unable to calculate order pricing. Please try again.' };
   }
 
-  if (usePricingEngineForOrders && engineResult?.totals) {
+  if (usePricingEngineForOrders) {
+    if (!engineResult?.totals) {
+      return { error: 'Unable to calculate order pricing. Please try again.' };
+    }
     const safeTotals = engineResult.totals;
     discount = Number(safeTotals.discount) || 0;
     deliveryFee = Number(safeTotals.deliveryFee) || 0;
@@ -1123,11 +1267,8 @@ export async function getOrderTracking(userId: string, orderId: string): Promise
 }
 
 /**
- * Real-time tracking payload. Legacy also attached live rider GPS/details (RiderV2/Rider
- * models) and store coordinates from the `merch.Store`/`DarkStore` models — store lookup is
- * ported (store module exists), but rider tracking is deferred: the rider/rider_v2_backend
- * sub-apps are out of scope for this pass, so `deliveryPartner`/`riderLocation` are omitted
- * from the payload until that sub-app is ported.
+ * Real-time tracking payload including delivery partner + last known GPS once a
+ * rider has accepted (see `attachTrackingDetails`).
  */
 async function buildTrackingPayload(order: Record<string, unknown>): Promise<Record<string, unknown>> {
   const formatted = formatOrderForApp(order);

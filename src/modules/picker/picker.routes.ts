@@ -10,6 +10,7 @@ const router = Router();
 const authed = [authenticatePicker];
 const active = [authenticatePicker, requireActivePicker];
 const riderAuthed = [authenticatePicker, requireWorkforceRole('rider')];
+const riderActive = [authenticatePicker, requireActivePicker, requireWorkforceRole('rider')];
 const pickerAuthed = [authenticatePicker, requireWorkforceRole('picker')];
 
 // â”€â”€â”€ Auth (public) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -195,10 +196,10 @@ router.post('/samples', ctrl.createSample);
 // â”€â”€â”€ Shared Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/shared-orders/completed', ...active, validate(v.deliveryHistoryQuerySchema, 'query'), ctrl.getCompletedSharedOrders);
 router.get('/shared-orders/assignorders', ...active, validate(v.listAvailableOrdersQuerySchema, 'query'), ctrl.getAssignOrders);
-router.post('/shared-orders/:orderId/proof-photo', ...active, pickerPhotoUpload, pickerUploadErrorHandler, validate(v.orderIdParamSchema, 'params'), validate(v.proofPhotoSchema), ctrl.uploadOrderProofPhoto);
+router.post('/shared-orders/:orderId/proof-photo', ...riderActive, pickerPhotoUpload, pickerUploadErrorHandler, validate(v.orderIdParamSchema, 'params'), validate(v.proofPhotoSchema), ctrl.uploadOrderProofPhoto);
 router.get('/shared-orders/:orderId', ...active, validate(v.orderIdParamSchema, 'params'), ctrl.getSharedOrder);
-router.put('/shared-orders/:orderId/status', ...active, validate(v.orderIdParamSchema, 'params'), validate(v.updateOrderStatusSchema), ctrl.updateSharedOrderStatus);
-router.post('/shared-orders/:orderId/complete', ...active, validate(v.orderIdParamSchema, 'params'), validate(v.completeOrderSchema), ctrl.completeSharedOrder);
+router.put('/shared-orders/:orderId/status', ...riderActive, validate(v.orderIdParamSchema, 'params'), validate(v.updateOrderStatusSchema), ctrl.updateSharedOrderStatus);
+router.post('/shared-orders/:orderId/complete', ...riderActive, validate(v.orderIdParamSchema, 'params'), validate(v.completeOrderSchema), ctrl.completeSharedOrder);
 router.get('/shared-orders', ...active, validate(v.listAvailableOrdersQuerySchema, 'query'), ctrl.getSharedOrders);
 
 // â”€â”€â”€ Bulk delivery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -301,6 +302,9 @@ adminRouter.post('/shift-change-requests/:requestId/decision', authenticateAdmin
 
 // Shift reassign
 adminRouter.post('/shifts/:shiftId/reassign', authenticateAdmin, ctrl.adminReassignPickerShift);
+
+// Live workforce shift tracking (booked + started)
+adminRouter.get('/shift-assignments/live', authenticateAdmin, ctrl.adminListLiveShiftWorkforce);
 
 export { adminRouter as pickerAdminRouter };
 export default pickerRouter;

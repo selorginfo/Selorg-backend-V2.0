@@ -12,6 +12,7 @@ import {
   PickerDocument,
   PickerNotification,
   PickerTransaction,
+  PickerWorkLocation,
 } from '../picker/picker.models';
 import { RIDER_APP_USER_FILTER, findPickerFleetUser, mapPickerToAdminDirectory } from './pickerFleet.bridge';
 
@@ -191,6 +192,12 @@ export function mapPickerShiftToAdmin(
 ): Record<string, unknown> {
   const hub = shift.warehouseKey || shift.siteId || shift.site || null;
   const status = adminStatusFromPickerShift(shift.status);
+  const role =
+    shift.workforceRole === 'picker'
+      ? 'Picker'
+      : shift.workforceRole === 'rider'
+        ? 'Rider'
+        : 'Rider';
   return {
     id: String(shift._id),
     _id: String(shift._id),
@@ -219,12 +226,14 @@ export function mapPickerShiftToAdmin(
     confirmed: bookedCount,
     gap: Math.max(0, (shift.capacity ?? 1) - bookedCount),
     status,
-    appliesTo: 'Rider',
-    workforce: 'Rider',
-    type: 'Rider',
+    appliesTo: role,
+    workforce: role,
+    workforceRole: shift.workforceRole || null,
+    type: role,
     days: 'Mon–Sun',
     breakTime: `${shift.breakDuration ?? 0} min`,
     break: `${shift.breakDuration ?? 0} min`,
+    breakMinutes: shift.breakDuration ?? 0,
     isPeak: !!shift.isSurge,
     basePay: shift.basePay ?? 0,
     bonus: shift.hasIncentive ? 1 : 0,
@@ -269,7 +278,27 @@ export async function listShiftsFromPickers(
           { $group: { _id: '$shiftId', count: { $sum: 1 } } },
         ]);
   const countMap = new Map(counts.map((c) => [String(c._id), c.count]));
-  const items = shifts.map((s) => mapPickerShiftToAdmin(s as any, countMap.get(String(s._id)) || 0));
+  const hubKeys = [...new Set(shifts.map((s: any) => s.warehouseKey).filter(Boolean).map(String))];
+  const hubs =
+    hubKeys.length === 0
+      ? []
+      : await PickerWorkLocation.find({ warehouseKey: { $in: hubKeys } })
+          .select('warehouseKey name')
+          .lean();
+  const hubMap = new Map(hubs.map((h: any) => [String(h.warehouseKey), h.name]));
+
+  const items = shifts.map((s) => {
+    const mapped = mapPickerShiftToAdmin(s as any, countMap.get(String(s._id)) || 0);
+    const key = String((s as any).warehouseKey || '');
+    const display = hubMap.get(key);
+    if (display) {
+      mapped.hubName = display;
+      mapped.scope = display;
+      mapped.darkStore = display;
+      mapped.store = display;
+    }
+    return mapped;
+  });
 
   return {
     items,
@@ -363,10 +392,17 @@ export async function createStoreShiftSlot(
     date,
     capacity: Math.max(1, Number(body.capacity ?? body.target ?? body.headcountTarget) || 1),
     breakDuration: Math.max(0, Number(body.breakDuration ?? body.breakMinutes) || 0),
+    workforceRole: (() => {
+      const r = String(body.appliesTo || body.workforceRole || body.role || '').toLowerCase();
+      if (r.includes('picker')) return 'picker';
+      if (r.includes('rider')) return 'rider';
+      return undefined;
+    })(),
     status: 'SCHEDULED',
     basePay: Number(body.basePay) || 0,
     hasIncentive: body.hasIncentive !== false,
     isSurge: !!body.isPeak || !!body.isSurge,
+    locationType: 'darkstore',
   });
   return mapPickerShiftToAdmin(doc.toObject() as Record<string, unknown>, 0);
 }
@@ -436,6 +472,98 @@ export async function reassignPickerShift(
     status: assignment?.status || 'ASSIGNED',
     date: formatDateOnly(dayStart),
     reassigned: true,
+    source: 'picker_shift_assignments',
+  };
+}
+
+/**
+ * Dashboard workforce tracking: who booked / started which shift at which Dark Store.
+ */
+export async function listLiveShiftWorkforce(filters: {
+  warehouseKey?: string;
+  role?: string;
+  status?: string;
+} = {}) {
+  const query: Record<string, unknown> = {
+    status: { $in: ['ASSIGNED', 'STARTED'] },
+  };
+  if (filters.status) {
+    const s = String(filters.status).toUpperCase();
+    if (s === 'STARTED' || s === 'ASSIGNED') query.status = s;
+  }
+  if (filters.warehouseKey) query.warehouseKey = String(filters.warehouseKey);
+
+  const assignments = await PickerShiftAssignment.find(query)
+    .sort({ startedAt: -1, updatedAt: -1 })
+    .limit(300)
+    .populate('userId', 'name phone workforceRole isOnline onlineSince currentLocationId activeShiftId onBreak status')
+    .populate('shiftId')
+    .lean();
+
+  const hubKeys = [
+    ...new Set(
+      assignments
+        .map((a: any) => a.warehouseKey || a.shiftId?.warehouseKey || a.userId?.currentLocationId)
+        .filter(Boolean)
+        .map(String),
+    ),
+  ];
+  const hubs =
+    hubKeys.length === 0
+      ? []
+      : await PickerWorkLocation.find({ warehouseKey: { $in: hubKeys } })
+          .select('warehouseKey name')
+          .lean();
+  const hubMap = new Map(hubs.map((h: any) => [String(h.warehouseKey), h.name]));
+
+  const roleFilter = filters.role ? String(filters.role).toLowerCase() : null;
+
+  const items = assignments
+    .map((a: any) => {
+      const user = a.userId;
+      const shift = a.shiftId;
+      if (!user || !shift) return null;
+      const role = user.workforceRole === 'picker' || user.workforceRole === 'rider' ? user.workforceRole : 'picker';
+      if (roleFilter && roleFilter !== 'all' && role !== roleFilter && !roleFilter.includes(role)) {
+        return null;
+      }
+      const hubKey = a.warehouseKey || shift.warehouseKey || user.currentLocationId || null;
+      const isOnline = Boolean(user.isOnline);
+      const onShift = a.status === 'STARTED' && isOnline;
+      return {
+        id: String(a._id),
+        assignmentId: String(a._id),
+        pickerId: String(user._id),
+        picker: user.name || user.phone || '—',
+        phone: user.phone || '',
+        role: role === 'picker' ? 'Picker' : 'Rider',
+        workforceRole: role,
+        darkStore: hubMap.get(String(hubKey)) || hubKey || '—',
+        warehouseKey: hubKey,
+        shiftId: String(shift._id),
+        shiftName: shift.name || 'Shift',
+        startTime: shift.startTime || '',
+        endTime: shift.endTime || '',
+        hours: shift.time || `${shift.startTime || ''} – ${shift.endTime || ''}`.trim(),
+        breakDuration: shift.breakDuration ?? 0,
+        capacity: shift.capacity ?? 1,
+        bookingStatus: a.status,
+        shiftStatus: shift.status,
+        startedAt: a.startedAt ? new Date(a.startedAt).toISOString() : null,
+        isOnline,
+        onShift,
+        onBreak: Boolean(user.onBreak),
+        currentStatus: onShift ? (user.onBreak ? 'On Break' : 'On Shift') : a.status === 'ASSIGNED' ? 'Booked' : 'Offline',
+        date: formatDateOnly(a.date),
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    items,
+    total: items.length,
+    onShift: items.filter((i: any) => i.onShift).length,
+    booked: items.filter((i: any) => i.bookingStatus === 'ASSIGNED').length,
     source: 'picker_shift_assignments',
   };
 }

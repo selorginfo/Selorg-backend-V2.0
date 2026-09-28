@@ -8,6 +8,7 @@ import {
   Zone,
 } from './hhd.constants';
 import type { IHHDOrder, IHHDItem, IHHDBag, IHHDTask, IHHDUser, IHHDRack } from './hhd.models';
+import { HHD_PICKER_ASSIGNMENT_TIMEOUT_MS } from './hhd.assignment-config';
 
 /** Strip Mongo internals and map `_id` → `id`. */
 export function toClient<T extends Record<string, unknown>>(doc: T | null | undefined): Record<string, unknown> | null {
@@ -177,6 +178,21 @@ export function mapOrderView(
     completedAt: o.completedAt ?? null,
     pickTimeSeconds,
     bagId: o.bagId ?? null,
+    assignmentExpiresAt:
+      o.assignedAt &&
+      (
+        [
+          ORDER_STATUS.RECEIVED,
+          ORDER_STATUS.BAG_SCANNED,
+          ORDER_STATUS.PICKING,
+          ORDER_STATUS.PHOTO_VERIFIED,
+        ] as string[]
+      ).includes(String(o.status))
+        ? new Date(
+            new Date(o.assignedAt as string | Date).getTime() + HHD_PICKER_ASSIGNMENT_TIMEOUT_MS,
+          ).toISOString()
+        : null,
+    assignmentGeneration: o.assignmentGeneration != null ? Number(o.assignmentGeneration) : 0,
   };
 }
 

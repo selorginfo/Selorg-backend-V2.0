@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { computeDeliveryFee, getDeliveryPricingConfig } from '../../services/deliveryPricing.service';
 import { Order } from '../orders/order.model';
+import { Product } from '../products/products.model';
 import * as couponsRepository from './coupons.repository';
 import { IPricingCoupon, PricingCoupon } from './coupon.model';
 
@@ -12,10 +13,12 @@ import { IPricingCoupon, PricingCoupon } from './coupon.model';
 
 export interface CartItemForValidation {
   productId?: string | null;
+  variantId?: string | null;
   sku_id?: string | null;
   skuId?: string | null;
   category?: string | null;
-  price: number;
+  /** Ignored when productId is present — catalog price is authoritative. */
+  price?: number;
   qty?: number;
   quantity?: number;
   isOnSale?: boolean;
@@ -36,6 +39,58 @@ export interface CouponValidationResult {
 function toUpper(value: unknown, fallback = ''): string {
   const v = String(value ?? '').trim();
   return v ? v.toUpperCase() : fallback;
+}
+
+/**
+ * Overwrite client-supplied line prices with catalog prices so coupon preview
+ * cannot be gamed via payload tampering.
+ */
+export async function resolveCartItemsFromCatalog(
+  cartItems: CartItemForValidation[],
+): Promise<{ items: CartItemForValidation[]; cartValue: number }> {
+  if (!cartItems.length) return { items: [], cartValue: 0 };
+
+  const resolved: CartItemForValidation[] = [];
+  let cartValue = 0;
+
+  for (const line of cartItems) {
+    const qty = Math.max(1, Number(line.qty ?? line.quantity) || 1);
+    let price = Number(line.price);
+    let category = line.category ?? null;
+    let isOnSale = line.isOnSale;
+
+    if (line.productId) {
+      const product = await Product.findById(line.productId)
+        .select('price originalPrice categoryId variants')
+        .lean();
+      if (product) {
+        price = Number(product.price) || 0;
+        if (product.variants?.length) {
+          const v =
+            product.variants.find((x) => String((x as { _id?: unknown })._id) === String(line.variantId)) ||
+            product.variants[0];
+          price = Number(v.price ?? product.price) || 0;
+        }
+        category = category || (product.categoryId ? String(product.categoryId) : null);
+        if (isOnSale == null && product.originalPrice != null) {
+          isOnSale = Number(product.originalPrice) > price;
+        }
+      }
+    }
+
+    if (!Number.isFinite(price) || price < 0) price = 0;
+    cartValue += price * qty;
+    resolved.push({
+      ...line,
+      price,
+      qty,
+      quantity: qty,
+      category,
+      isOnSale,
+    });
+  }
+
+  return { items: resolved, cartValue };
 }
 
 /** Same single delivery-fee rule the pricing engine bills with. */
@@ -159,14 +214,14 @@ export async function validateCoupon(
     qualifyingValue = cartItems
       .filter((item) => !coupon.excludeSaleItems || !item.isOnSale)
       .filter((item) => coupon.applicableCategories.includes(String(item.category)))
-      .reduce((sum, item) => sum + item.price * (item.qty || item.quantity || 0), 0);
+      .reduce((sum, item) => sum + (Number(item.price) || 0) * (item.qty || item.quantity || 0), 0);
   }
 
   if (coupon.discountOn === 'SPECIFIC_SKU' && coupon.applicableSkuIds && coupon.applicableSkuIds.length > 0) {
     qualifyingValue = cartItems
       .filter((item) => !coupon.excludeSaleItems || !item.isOnSale)
       .filter((item) => coupon.applicableSkuIds.includes(String(item.skuId || item.sku_id)))
-      .reduce((sum, item) => sum + item.price * (item.qty || item.quantity || 0), 0);
+      .reduce((sum, item) => sum + (Number(item.price) || 0) * (item.qty || item.quantity || 0), 0);
   }
 
   if (qualifyingValue < minOrderValue) return { valid: false, error_code: 'MIN_ORDER_NOT_MET', min_required: minOrderValue };

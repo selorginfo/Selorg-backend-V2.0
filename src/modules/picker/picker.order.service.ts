@@ -5,7 +5,7 @@ import { PickerPodPhoto, PickerLocationPing } from './picker.rider.models';
 import { AppError } from '../../utils/AppError';
 import { pickerConfig } from './picker.config';
 import {
-  distanceDisplay, durationDisplay, formatAddressLine, haversineKm, hasCoords, maskPhone, dialablePhone,
+  distanceDisplay, durationDisplay, formatAddressLine, formatCoarseAddress, haversineKm, hasCoords, maskPhone, dialablePhone,
   orderDisplayNumbers, relativeDateTimeDisplay, hubDayStart, hubDayEnd, parseHubDate,
 } from './picker.format';
 import { getCashInHand, recordCodCollection } from './picker.cash.service';
@@ -143,6 +143,11 @@ async function toAvailableOrderDto(order: any, pickerId: string, hubName: string
   const distanceKm = order.distanceKm ?? null;
   const etaMinutes = order.etaMinutes ?? computeEtaMinutes(distanceKm);
   const bay = await resolveDispatchBay(order);
+  const assignedToMe = String(order.pickerId || '') === pickerId;
+  // Unclaimed offers only expose a coarse drop area (city/pin). Full door address after accept.
+  const deliver = assignedToMe || order.riderStage === 'accepted' || order.riderStage === 'picked_up'
+    ? formatAddressLine(order.deliveryAddress)
+    : formatCoarseAddress(order.deliveryAddress);
 
   return {
     id: String(order._id),
@@ -151,7 +156,7 @@ async function toAvailableOrderDto(order: any, pickerId: string, hubName: string
     payout: Math.round(order.riderPayout || computeRiderPayout(distanceKm).total),
     pickup: hubName,
     bay,
-    deliver: formatAddressLine(order.deliveryAddress),
+    deliver,
     distanceKm,
     distance: distanceDisplay(distanceKm),
     etaMinutes,
@@ -160,7 +165,7 @@ async function toAvailableOrderDto(order: any, pickerId: string, hubName: string
     priority: Boolean(order.isPriority),
     paymentMode: paymentModeOf(order),
     codAmount: codAmountOf(order),
-    assignedToMe: String(order.pickerId || '') === pickerId,
+    assignedToMe,
     riderStage: order.riderStage || 'offered',
     expiresAt: order.offerExpiresAt ? new Date(order.offerExpiresAt).toISOString() : null,
   };
@@ -181,6 +186,33 @@ function riderHubClause(hubKey: string): Record<string, unknown> {
     clause.push({ offerHubKey: null }, { offerHubKey: { $exists: false } });
   }
   return { $or: clause };
+}
+
+/**
+ * Admin exclusive offers use a short `offerExpiresAt` window. Once that window
+ * ends the order would vanish from Live Orders forever. Sliding the expiry
+ * forward keeps open-pool visibility without a separate cron.
+ */
+async function renewExpiredHubOffers(hubKey: string): Promise<void> {
+  const now = new Date();
+  const nextExpiry = new Date(now.getTime() + pickerConfig.offerExpirySeconds * 1000);
+  const result = await Order.updateMany(
+    {
+      pickerId: null,
+      riderStage: 'offered',
+      status: { $in: OFFERABLE_ORDER_STATUSES },
+      offerExpiresAt: { $lte: now },
+      ...riderHubClause(hubKey),
+    },
+    { $set: { offerExpiresAt: nextExpiry } },
+  );
+  if (result.modifiedCount > 0) {
+    logger.info('[rider-orders] renewed expired hub offers', {
+      hubKey,
+      renewed: result.modifiedCount,
+      nextExpiry: nextExpiry.toISOString(),
+    });
+  }
 }
 
 export async function listAvailableOrders(
@@ -205,6 +237,11 @@ export async function listAvailableOrders(
       deliveryMode: user.deliveryMode || null,
     });
     params = { ...params, scope: 'mine' };
+  }
+
+  // Revive admin-window offers that would otherwise disappear after expiry.
+  if (params.scope === 'available' || params.scope === 'all') {
+    await renewExpiredHubOffers(riderHubKey);
   }
 
   const mineFilter = { pickerId: userId, riderStage: { $in: ['accepted', 'picked_up'] } };
@@ -297,6 +334,7 @@ export async function getOrderDetail(orderId: string, pickerId: string) {
     .findOne({ _id: order.userId }, { projection: { name: 1, mobile: 1, phone: 1 } })) as any;
 
   const bay = await resolveDispatchBay(order);
+  const assigned = ['accepted', 'picked_up'].includes(String(order.riderStage || ''));
 
   return {
     id: String(order._id),
@@ -325,15 +363,17 @@ export async function getOrderDetail(orderId: string, pickerId: string) {
       name: customer?.name || 'Customer',
       maskedPhone: maskPhone(customer?.mobile || customer?.phone),
       phoneMasked: maskPhone(customer?.mobile || customer?.phone),
-      phone: ['accepted', 'picked_up'].includes(String(order.riderStage || ''))
-        ? dialablePhone(customer?.mobile || customer?.phone)
-        : undefined,
+      // Full dialable number only after the rider owns the order (PII).
+      phone: assigned ? dialablePhone(customer?.mobile || customer?.phone) : undefined,
     },
     delivery: {
-      address: formatAddressLine(order.deliveryAddress),
-      landmark: order.deliveryAddress?.landmark || null,
-      latitude: order.deliveryAddress?.latitude ?? null,
-      longitude: order.deliveryAddress?.longitude ?? null,
+      address: assigned
+        ? formatAddressLine(order.deliveryAddress)
+        : formatCoarseAddress(order.deliveryAddress),
+      landmark: assigned ? (order.deliveryAddress?.landmark || null) : null,
+      // Precise drop coords unlock after accept so riders can navigate.
+      latitude: assigned ? (order.deliveryAddress?.latitude ?? null) : null,
+      longitude: assigned ? (order.deliveryAddress?.longitude ?? null) : null,
     },
     payout: Math.round(order.riderPayout || computeRiderPayout(distanceKm).total),
     paymentMode: paymentModeOf(order),
@@ -553,10 +593,19 @@ async function cancelOrder(
 
   await PickerUser.updateOne({ _id: new mongoose.Types.ObjectId(pickerId) }, { $set: { activeOrderId: null } });
 
-  const updated = await Order.findById(orderId).select('status updatedAt').lean();
+  const reoffered = await Order.findById(orderId);
+  if (reoffered) {
+    void fulfillment.reofferOrderToHub(reoffered, {
+      title: 'Delivery available again',
+      body: `Order ${reoffered.orderNumber} was returned to the hub`,
+    });
+  }
+
+  const updated = await Order.findById(orderId).select('status riderStage updatedAt').lean();
+  // DB truth is `offered` (reassigned). Cancelling rider's local UI treats this as done via `cancellation.reassigned`.
   return {
     id: orderId,
-    riderStage: 'cancelled',
+    riderStage: 'offered',
     status: (updated as any)?.status || 'getting-packed',
     updatedAt: new Date((updated as any)?.updatedAt || cancelledAt).toISOString(),
     cancellation: { reason, note: input.note || null, reassigned: true },

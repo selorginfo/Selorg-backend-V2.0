@@ -23,11 +23,14 @@ export async function list(req: Request, res: Response, next: NextFunction): Pro
 export async function validate(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = req.body as ValidateCouponInput;
+    const rawItems = (body.cart_items as couponsService.CartItemForValidation[]) || [];
+    const { items, cartValue } = await couponsService.resolveCartItemsFromCatalog(rawItems);
     const result = await couponsService.validateCoupon(
       body.coupon_code,
       String(body.user_id || req.customer?._id || ''),
-      (body.cart_items as couponsService.CartItemForValidation[]) || [],
-      parseFloat(String(body.cart_value)) || 0,
+      items,
+      // Prefer catalog-derived cart value when line items were provided.
+      rawItems.length > 0 ? cartValue : parseFloat(String(body.cart_value)) || 0,
       body.payment_method || 'ALL',
       body.zone || '',
       parseFloat(String(body.delivery_fee)) || 0,

@@ -535,6 +535,19 @@ export async function updateOrderStatus(
           throw new AppError(`Order not found with id of ${orderId}`, 404, 'NOT_FOUND');
         }
 
+        const { HHD_PICKER_ASSIGNMENT_TIMEOUT_MS } = await import('./hhd.assignment-config');
+        if (
+          owned.assignedAt &&
+          Date.now() - new Date(owned.assignedAt).getTime() > HHD_PICKER_ASSIGNMENT_TIMEOUT_MS &&
+          status !== ORDER_STATUS.COMPLETED
+        ) {
+          throw new AppError(
+            'This assignment expired. The order was released for another picker.',
+            409,
+            'ASSIGNMENT_EXPIRED',
+          );
+        }
+
         // Starting an already-started pick is a resume, not a conflict.
         if (owned.status === status && status === ORDER_STATUS.PICKING) {
           const bag = await loadBagForOrder(owned);

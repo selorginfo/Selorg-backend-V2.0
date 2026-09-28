@@ -5,6 +5,10 @@ import { ORDER_STATUS, OrderStatus } from './hhd.constants';
 import { DEFAULT_HUB_KEY } from '../orders/fulfillment.service';
 import * as fulfillment from '../orders/fulfillment.service';
 import { Order } from '../orders/order.model';
+import { assertHhdOperatorEligibleToClaim } from './hhd.eligibility';
+import { reserveAvailableRiderForHhdOrder } from './hhd.rider-reserve';
+import { HHD_PICKER_ASSIGNMENT_TIMEOUT_MS } from './hhd.assignment-config';
+import { logger } from '../../utils/logger';
 
 export function effectiveHubKey(raw?: string | null): string {
   const v = String(raw || '').trim();
@@ -69,6 +73,8 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
     throw new AppError('Order id is required', 400, 'VALIDATION_ERROR');
   }
 
+  const eligibility = await assertHhdOperatorEligibleToClaim(userId, orderId);
+
   const { ensureHhdOperatorHub } = await import('./hhdOperator.bridge');
   const operatorHub = await ensureHhdOperatorHub(userId);
   const existing = await HHDOrder.findOne({ orderId });
@@ -87,12 +93,12 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
 
   // Require a device only when this operator has none AND the hub still has free devices to collect.
   const { PickerDevice } = await import('../picker/picker.models');
-  const held = await PickerDevice.findOne({
+  const held = (await PickerDevice.findOne({
     assignedTo: new mongoose.Types.ObjectId(userId),
     status: 'assigned',
   })
     .select('deviceId')
-    .lean();
+    .lean()) as { deviceId?: string } | null;
   if (held?.deviceId) hsdDeviceId = String(held.deviceId);
   if (!hsdDeviceId) {
     const available = await PickerDevice.countDocuments({ status: 'available' }).catch(() => 0);
@@ -116,8 +122,10 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
       hhdUserId: userId,
       hhdUserName,
       hsdDeviceId: hsdDeviceId || undefined,
+      pickerShiftId: eligibility.shiftId || undefined,
     });
-    return existing;
+    await ensureRiderReserved(existing.orderId, operatorHub);
+    return (await HHDOrder.findOne({ orderId })) || existing;
   }
   if (owner) {
     throw new AppError('Another operator has already accepted this order.', 409, 'ORDER_ALREADY_ASSIGNED');
@@ -144,7 +152,7 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
           existing.slaDueAt ||
           (existing.targetTime
             ? new Date(now.getTime() + existing.targetTime * 60 * 1000)
-            : undefined),
+            : new Date(now.getTime() + HHD_PICKER_ASSIGNMENT_TIMEOUT_MS)),
       },
     },
     { new: true },
@@ -158,6 +166,20 @@ export async function claimHhdOrder(userId: string, orderId: string): Promise<IH
     hhdUserId: userId,
     hhdUserName,
     hsdDeviceId: hsdDeviceId || undefined,
+    pickerShiftId: eligibility.shiftId || undefined,
   });
-  return claimed;
+
+  await ensureRiderReserved(claimed.orderId, operatorHub);
+  return (await HHDOrder.findOne({ orderId })) || claimed;
+}
+
+async function ensureRiderReserved(orderId: string, hubKey: string): Promise<void> {
+  try {
+    await reserveAvailableRiderForHhdOrder(orderId, hubKey);
+  } catch (err) {
+    logger.warn('[hhd.claim] rider reserve failed (packing continues)', {
+      orderId,
+      error: (err as Error).message,
+    });
+  }
 }

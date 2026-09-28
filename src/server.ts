@@ -43,6 +43,9 @@ async function bootstrap() {
   const { initOrderRealtime } = await import('./realtime/orderRealtime');
   initOrderRealtime(httpServer);
 
+  const { startHhdAssignmentTimeoutJob } = await import('./modules/hhd/hhd.assignment-timeout');
+  startHhdAssignmentTimeoutJob();
+
   httpServer
     .listen(appConfig.port, appConfig.host, () => {
       logger.info('Server started', {

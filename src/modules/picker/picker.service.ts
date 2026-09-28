@@ -697,7 +697,72 @@ export async function listPickers(
     PickerUser.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     PickerUser.countDocuments(query),
   ]);
-  const pickers = (rawPickers as Record<string, unknown>[]).map(mapPickerUserForAdminDirectory);
+
+  // Attach booked/started shift details for Dashboard workforce tracking.
+  const pickerIds = (rawPickers as Array<{ _id: unknown }>).map((p) => p._id);
+  const activeShiftIds = (rawPickers as Array<{ activeShiftId?: unknown }>)
+    .map((p) => p.activeShiftId)
+    .filter(Boolean);
+  const [assignments, shifts] = await Promise.all([
+    pickerIds.length
+      ? PickerShiftAssignment.find({
+          userId: { $in: pickerIds },
+          status: { $in: ['ASSIGNED', 'STARTED'] },
+        })
+          .sort({ updatedAt: -1 })
+          .lean()
+      : Promise.resolve([]),
+    activeShiftIds.length
+      ? PickerShift.find({ _id: { $in: activeShiftIds } }).lean()
+      : Promise.resolve([]),
+  ]);
+  const shiftById = new Map((shifts as any[]).map((s) => [String(s._id), s]));
+  const assignmentByUser = new Map<string, any>();
+  for (const a of assignments as any[]) {
+    const uid = String(a.userId);
+    if (!assignmentByUser.has(uid) || a.status === 'STARTED') {
+      assignmentByUser.set(uid, a);
+    }
+  }
+  const assignmentShiftIds = [...assignmentByUser.values()]
+    .map((a) => a.shiftId)
+    .filter((id) => id && !shiftById.has(String(id)));
+  if (assignmentShiftIds.length) {
+    const more = await PickerShift.find({ _id: { $in: assignmentShiftIds } }).lean();
+    for (const s of more as any[]) shiftById.set(String(s._id), s);
+  }
+
+  const pickers = (rawPickers as Record<string, unknown>[]).map((p) => {
+    const base = mapPickerUserForAdminDirectory(p);
+    const uid = String(p._id);
+    const assignment = assignmentByUser.get(uid);
+    const shift =
+      (p.activeShiftId && shiftById.get(String(p.activeShiftId))) ||
+      (assignment?.shiftId && shiftById.get(String(assignment.shiftId))) ||
+      null;
+    if (!shift && !assignment) return base;
+    return {
+      ...base,
+      shiftName: shift?.name || null,
+      shiftStartTime: shift?.startTime || null,
+      shiftEndTime: shift?.endTime || null,
+      shiftHours: shift ? (shift.time || `${shift.startTime || ''} – ${shift.endTime || ''}`.trim()) : null,
+      bookingStatus: assignment?.status || null,
+      shiftStartedAt: assignment?.startedAt ? new Date(assignment.startedAt).toISOString() : null,
+      currentShift: shift
+        ? {
+            id: String(shift._id),
+            name: shift.name,
+            startTime: shift.startTime,
+            endTime: shift.endTime,
+            hours: shift.time || `${shift.startTime || ''} – ${shift.endTime || ''}`.trim(),
+            bookingStatus: assignment?.status || null,
+            startedAt: assignment?.startedAt ? new Date(assignment.startedAt).toISOString() : null,
+            warehouseKey: shift.warehouseKey || assignment?.warehouseKey || null,
+          }
+        : null,
+    };
+  });
 
   // HSD union ONLY when searching OR includeHsd=true — never pollute default directory.
   // Never mix HSD into the approvals queue.

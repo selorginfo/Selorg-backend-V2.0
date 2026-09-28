@@ -338,6 +338,8 @@ export interface IPickerShift extends Document {
   date?: Date;
   capacity: number;
   breakDuration: number;
+  /** Which workforce can book this shift. Absent on legacy rows = open to both. */
+  workforceRole?: 'picker' | 'rider';
   status: 'SCHEDULED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
   orders?: number;
   basePay?: number;
@@ -363,6 +365,7 @@ const PickerShiftSchema = new Schema<IPickerShift>(
     date: { type: Date, index: true },
     capacity: { type: Number, default: 1 },
     breakDuration: { type: Number, default: 0 },
+    workforceRole: { type: String, enum: ['picker', 'rider'], index: true },
     status: { type: String, enum: ['SCHEDULED', 'ACTIVE', 'COMPLETED', 'CANCELLED'], default: 'SCHEDULED', index: true },
     orders: { type: Number },
     basePay: { type: Number },
@@ -374,6 +377,7 @@ const PickerShiftSchema = new Schema<IPickerShift>(
   { timestamps: true, collection: 'picker_shifts' },
 );
 PickerShiftSchema.index({ warehouseKey: 1, siteId: 1, status: 1 });
+PickerShiftSchema.index({ warehouseKey: 1, workforceRole: 1, status: 1 });
 PickerShiftSchema.index({ status: 1, date: 1 });
 
 export const PickerShift = mongoose.models.PickerShift || mongoose.model<IPickerShift>('PickerShift', PickerShiftSchema);
